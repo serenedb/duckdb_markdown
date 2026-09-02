@@ -302,7 +302,7 @@ unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &cont
 
 		// Set alias for non-glob patterns
 		if (!is_glob_pattern) {
-			result->alias = fs.ExtractBaseName(table_name);
+			result->alias = Identifier(fs.ExtractBaseName(table_name));
 		}
 
 		return std::move(result);

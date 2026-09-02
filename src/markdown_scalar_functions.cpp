@@ -22,15 +22,11 @@ void MarkdownFunctions::RegisterValidationFunction(ExtensionLoader &loader) {
 	                            [](DataChunk &args, ExpressionState &state, Vector &result) {
 		                            auto &input_vector = args.data[0];
 
-		                            UnaryExecutor::ExecuteWithNulls<string_t, bool>(
-		                                input_vector, result, args.size(),
-		                                [&](string_t md_str, ValidityMask &mask, idx_t idx) {
-			                                if (!mask.RowIsValid(idx)) {
-				                                return false;
-			                                }
-
+		                            UnaryExecutor::Execute<string_t, bool>(
+		                                input_vector, result, args.size(), [&](string_t md_str) {
 			                                try {
-				                                // Basic validation - check for basic Markdown structure
+				                                // Basic validation - check for
+				                                // basic Markdown structure
 				                                const std::string content = md_str.GetString();
 				                                return !content.empty();
 			                                } catch (...) {
