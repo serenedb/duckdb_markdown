@@ -105,9 +105,9 @@ false
 
 # Backslash and quote survive the table round trip.
 query I
-SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(
+SELECT contains(duck_blocks_to_md(parse_markdown_to_duck_blocks(
         '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
-        '| he said "hi" | c:' || chr(92) || chr(92) || 'tmp |')) LIKE '%c:' || chr(92) || 'tmp%';
+        '| he said "hi" | c:' || chr(92) || chr(92) || 'tmp |')), 'c:' || chr(92) || 'tmp');
 ----
 true
 
