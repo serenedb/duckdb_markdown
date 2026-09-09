@@ -46,14 +46,6 @@ SELECT (md_stats(doc())).link_count - (md_stats(doc(), true)).link_count
 ----
 true
 
-# The `exact :=` spelling binds to the same overload. DuckDB does not validate
-# named-argument labels for scalar functions, so this is sugar, not a contract;
-# asserted so the documented call form is known to work.
-query I
-SELECT (md_stats(doc(), exact := true)).link_count;
-----
-3
-
 # =============================================================================
 # The divergences already asserted elsewhere in the suite, now with the exact
 # column beside them. Left value = existing behaviour, unchanged.

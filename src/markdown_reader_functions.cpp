@@ -276,7 +276,7 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context, Table
 	auto &bind_data = input.bind_data->CastNoConst<MarkdownReadDocumentBindData>();
 
 	if (bind_data.current_file_index >= bind_data.files.size()) {
-		output.SetCardinality(0);
+		output.SetChildCardinality(0);
 		return;
 	}
 
@@ -346,7 +346,7 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context, Table
 		bind_data.current_file_index++;
 	}
 
-	output.SetCardinality(output_idx);
+	output.SetChildCardinality(output_idx);
 }
 
 //===--------------------------------------------------------------------===//
@@ -527,7 +527,7 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context, TableF
 	auto &bind_data = input.bind_data->CastNoConst<MarkdownReadSectionBindData>();
 
 	if (bind_data.current_section_index >= bind_data.all_sections.size()) {
-		output.SetCardinality(0);
+		output.SetChildCardinality(0);
 		return;
 	}
 
@@ -580,7 +580,7 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context, TableF
 		bind_data.current_section_index++;
 	}
 
-	output.SetCardinality(output_idx);
+	output.SetChildCardinality(output_idx);
 }
 
 //===--------------------------------------------------------------------===//
@@ -665,7 +665,7 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 	auto &bind_data = input.bind_data->CastNoConst<MarkdownReadBlocksBindData>();
 
 	if (bind_data.current_block_index >= bind_data.all_blocks.size()) {
-		output.SetCardinality(0);
+		output.SetChildCardinality(0);
 		return;
 	}
 
@@ -733,7 +733,7 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 		bind_data.current_block_index++;
 	}
 
-	output.SetCardinality(output_idx);
+	output.SetChildCardinality(output_idx);
 }
 
 //===--------------------------------------------------------------------===//

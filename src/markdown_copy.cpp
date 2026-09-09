@@ -103,12 +103,16 @@ void MarkdownCopyFunction::CopyOptions(ClientContext &context, CopyOptionsInput 
 //===--------------------------------------------------------------------===//
 
 unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, CopyFunctionBindInput &input,
-                                                    const vector<string> &names, const vector<LogicalType> &sql_types) {
+                                                    const vector<Identifier> &names,
+                                                    const vector<LogicalType> &sql_types) {
 	auto result = make_uniq<WriteMarkdownBindData>();
 	auto &options = input.info.options;
 
 	// Store schema info
-	result->column_names = names;
+	result->column_names.reserve(names.size());
+	for (auto &name : names) {
+		result->column_names.push_back(name.GetIdentifierName());
+	}
 	result->column_types = sql_types;
 
 	// Parse options
@@ -169,7 +173,7 @@ unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, Copy
 	// For document mode, resolve column indices
 	if (result->markdown_mode == WriteMarkdownBindData::MarkdownMode::DOCUMENT) {
 		for (idx_t i = 0; i < names.size(); i++) {
-			auto lower_name = StringUtil::Lower(names[i]);
+			auto lower_name = StringUtil::Lower(names[i].GetIdentifierName());
 			if (lower_name == StringUtil::Lower(result->level_column)) {
 				result->level_col_idx = i;
 			} else if (lower_name == StringUtil::Lower(result->title_column)) {
@@ -192,7 +196,7 @@ unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, Copy
 	// For blocks mode, resolve column indices (uses duck_block naming)
 	if (result->markdown_mode == WriteMarkdownBindData::MarkdownMode::BLOCKS) {
 		for (idx_t i = 0; i < names.size(); i++) {
-			auto lower_name = StringUtil::Lower(names[i]);
+			auto lower_name = StringUtil::Lower(names[i].GetIdentifierName());
 			if (lower_name == StringUtil::Lower(result->kind_column)) {
 				result->kind_col_idx = i;
 			} else if (lower_name == StringUtil::Lower(result->element_type_column)) {
