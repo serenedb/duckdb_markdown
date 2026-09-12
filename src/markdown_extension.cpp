@@ -14,9 +14,13 @@
 #include "markdown_extraction_functions.hpp"
 #include "duck_block_functions.hpp"
 
+#include <cmark-gfm-core-extensions.h>
+
 namespace duckdb {
 
 static void LoadInternal(ExtensionLoader &loader) {
+	cmark_gfm_core_extensions_ensure_registered();
+
 	// Register Markdown reader
 	MarkdownReader::RegisterFunction(loader);
 
