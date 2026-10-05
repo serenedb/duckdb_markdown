@@ -74,7 +74,7 @@ COPY pipe_test TO '__TEST_DIR__/table_pipes.md' (FORMAT MARKDOWN, escape_pipes t
 
 # Verify pipes are escaped (check for backslash-pipe sequence)
 query I
-SELECT content LIKE '%a\|b%' FROM read_text('__TEST_DIR__/table_pipes.md');
+SELECT contains(content, 'a\|b') FROM read_text('__TEST_DIR__/table_pipes.md');
 ----
 true
 
