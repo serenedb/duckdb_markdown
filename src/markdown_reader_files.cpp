@@ -276,7 +276,7 @@ vector<markdown_utils::MarkdownSection> MarkdownReader::ProcessSections(const st
                                                                         const MarkdownReadOptions &options) {
 	// Strip frontmatter before parsing - cmark-gfm doesn't understand YAML frontmatter
 	// and will incorrectly interpret --- as setext heading underlines
-	string body = markdown_utils::StripFrontmatter(content);
+	const std::string_view body = markdown_utils::StripFrontmatter(content);
 
 	// Calculate effective max_level based on max_depth
 	// max_depth is relative to min_level (depth 1 = only min_level headings)
