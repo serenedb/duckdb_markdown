@@ -71,7 +71,7 @@ std::string ExtractRawFrontmatter(const std::string &markdown_str);
 
 // Strip frontmatter from markdown content, returning only the body
 // This is needed because cmark-gfm doesn't understand YAML frontmatter
-std::string StripFrontmatter(const std::string &markdown_str);
+std::string_view StripFrontmatter(std::string_view markdown_str);
 
 // Like StripFrontmatter, but replaces the removed region with the same number of
 // newlines rather than deleting it: byte offsets shift, LINE numbers do not.
@@ -111,9 +111,9 @@ MarkdownStats CalculateStats(const std::string &markdown_str, bool exact = false
 // - "smart": Adaptive - include small subsections, summarize large ones
 
 // Parse document into sections
-std::vector<MarkdownSection> ParseSections(const std::string &markdown_str, int32_t min_level = 1,
-                                           int32_t max_level = 6, bool include_content = true,
-                                           const std::string &content_mode = "minimal", idx_t max_content_length = 0);
+std::vector<MarkdownSection> ParseSections(std::string_view markdown_str, int32_t min_level = 1, int32_t max_level = 6,
+                                           bool include_content = true, const std::string &content_mode = "minimal",
+                                           idx_t max_content_length = 0);
 
 // Generate stable section IDs
 std::string GenerateSectionId(const std::string &heading_text,
@@ -204,7 +204,7 @@ struct MarkdownTable {
 std::vector<CodeBlock> ExtractCodeBlocks(const std::string &markdown_str, const std::string &language_filter = "");
 
 // Extract sections using cmark-gfm AST (replacement for regex-based ParseSections)
-std::vector<MarkdownSection> ExtractSections(const std::string &markdown_str, int32_t min_level = 1,
+std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int32_t min_level = 1,
                                              int32_t max_level = 6, bool include_content = true,
                                              const std::string &content_mode = "minimal", idx_t max_content_length = 0);
 

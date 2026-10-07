@@ -32,10 +32,10 @@ SELECT len(md_extract_table_rows(E'| A | B |\n|---|---|\n| 1 | 2 |'));
 ----
 4
 
-# query I
-# SELECT len(md_extract_tables_json(E'| A | B |\n|---|---|\n| 1 | 2 |'));
-# ----
-# 0
+query I
+SELECT len(md_extract_tables_json(E'| A | B |\n|---|---|\n| 1 | 2 |'));
+----
+1
 
 # Test empty inputs
 query I

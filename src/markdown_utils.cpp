@@ -47,7 +47,7 @@ struct FrontmatterMatch {
 // scanners in this file have to skip it explicitly or they disagree with cmark
 // on the very same document -- a BOM-prefixed post silently got no frontmatter
 // and no tags (#21). Returns the offset of the first content byte.
-static size_t SkipBOM(const std::string &s) {
+static size_t SkipBOM(std::string_view s) {
 	if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEF && static_cast<unsigned char>(s[1]) == 0xBB &&
 	    static_cast<unsigned char>(s[2]) == 0xBF) {
 		return 3;
@@ -88,7 +88,7 @@ static size_t SkipBOM(const std::string &s) {
 // at both ends. Strict-three is the only one of the three that cannot silently
 // mangle a body, and it is what duckdb_yaml's read_yaml_frontmatter enforces,
 // so the two extensions answer the same about the same file.
-static bool IsFenceRun(const std::string &s, size_t line, size_t line_end, char d) {
+static bool IsFenceRun(std::string_view s, size_t line, size_t line_end, char d) {
 	if (line_end - line < 3 || s[line] != d || s[line + 1] != d || s[line + 2] != d) {
 		return false;
 	}
@@ -107,8 +107,7 @@ static bool IsFenceRun(const std::string &s, size_t line, size_t line_end, char 
 // `yaml(md_extract_frontmatter(content))` for the in-process seam). It never
 // OPENS a block, and it has no meaning in a `+++` TOML block, hence the flag
 // and the `d == '-'` guard.
-static bool IsFrontmatterFenceLine(const std::string &s, size_t line, size_t line_end, char d,
-                                   bool allow_document_end) {
+static bool IsFrontmatterFenceLine(std::string_view s, size_t line, size_t line_end, char d, bool allow_document_end) {
 	return IsFenceRun(s, line, line_end, d) || (allow_document_end && d == '-' && IsFenceRun(s, line, line_end, '.'));
 }
 
@@ -124,7 +123,7 @@ static bool IsFrontmatterFenceLine(const std::string &s, size_t line, size_t lin
 //     +++\ntitle = "x"\ntags = ["a"]\n+++
 // into one line. TOML is line-oriented, so the result is no longer parseable by
 // anything: the fields are not merely misfiled, they are unrecoverable.
-static FrontmatterMatch FindFrontmatterDelimited(const std::string &s, char d) {
+static FrontmatterMatch FindFrontmatterDelimited(std::string_view s, char d) {
 	FrontmatterMatch m;
 	m.delimiter = d;
 
@@ -194,7 +193,7 @@ static FrontmatterMatch FindFrontmatterDelimited(const std::string &s, char d) {
 
 // YAML first: `---` is by far the common case, and a document cannot open with
 // both fences, so the order is a cost question rather than a precedence one.
-static FrontmatterMatch FindFrontmatter(const std::string &s) {
+static FrontmatterMatch FindFrontmatter(std::string_view s) {
 	auto m = FindFrontmatterDelimited(s, '-');
 	if (m.found) {
 		return m;
@@ -284,7 +283,7 @@ std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavo
 	// promoting kind='value' metadata into kind='block' content. No mainstream
 	// renderer does this: Jekyll and Hugo consume the block, GitHub renders it
 	// as a table; none of them underline it into a heading.
-	const std::string content = StripFrontmatter(markdown_str);
+	const std::string_view content = StripFrontmatter(markdown_str);
 	if (content.empty()) {
 		return "";
 	}
@@ -322,7 +321,7 @@ std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavo
 	}
 
 	// Feed the input to the parser
-	cmark_parser_feed(parser, content.c_str(), content.length());
+	cmark_parser_feed(parser, content.data(), content.length());
 
 	// Parse and render
 	cmark_node *doc = cmark_parser_finish(parser);
@@ -352,14 +351,14 @@ std::string MarkdownToText(const std::string &markdown_str) {
 	// StripFrontmatter is the point: this function now agrees with
 	// ExtractMetadata, read_markdown and sections about what a block is, rather
 	// than holding the only dissenting opinion in the extension.
-	const std::string content = StripFrontmatter(markdown_str);
+	const std::string_view content = StripFrontmatter(markdown_str);
 	if (content.empty()) {
 		return "";
 	}
 
 	// Parse the markdown document
 	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
-	cmark_parser_feed(parser, content.c_str(), content.length());
+	cmark_parser_feed(parser, content.data(), content.length());
 	cmark_node *doc = cmark_parser_finish(parser);
 
 	// Render as plain text
@@ -425,7 +424,7 @@ std::string ExtractRawFrontmatter(const std::string &markdown_str) {
 	return "";
 }
 
-std::string StripFrontmatter(const std::string &markdown_str) {
+std::string_view StripFrontmatter(std::string_view markdown_str) {
 	// Linear scan (see FindFrontmatter) instead of a backtracking std::regex.
 	// Faithful to R"(^---\r?\n[\s\S]*?\r?\n---\r?\n*)": strip through the closing
 	// "---" plus a single optional '\r' and any following '\n' characters.
@@ -488,7 +487,7 @@ Value MetadataToMap(const MarkdownMetadata &metadata) {
 // what ExtractLinks and ExtractCodeBlocks do -- that is the point: in exact mode
 // md_stats must agree with md_extract_links / md_extract_code_blocks rather than
 // give a second opinion on the same document.
-static void CountStructuralNodes(const std::string &markdown_str, MarkdownStats &stats) {
+static void CountStructuralNodes(std::string_view markdown_str, MarkdownStats &stats) {
 	stats.heading_count = 0;
 	stats.code_block_count = 0;
 	stats.link_count = 0;
@@ -497,7 +496,7 @@ static void CountStructuralNodes(const std::string &markdown_str, MarkdownStats 
 	}
 
 	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
-	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
+	cmark_parser_feed(parser, markdown_str.data(), markdown_str.length());
 	cmark_node *doc = cmark_parser_finish(parser);
 	cmark_iter *iter = cmark_iter_new(doc);
 
@@ -532,11 +531,8 @@ MarkdownStats CalculateStats(const std::string &markdown_str_in, bool exact) {
 	MarkdownStats stats = {};
 
 	// Skip a leading BOM before counting anything: it is an encoding marker,
-	// not a character of the document, and cmark does not see it either. Only
-	// copies when a BOM is actually present (#21).
-	const size_t bom = SkipBOM(markdown_str_in);
-	const std::string bom_stripped = bom ? markdown_str_in.substr(bom) : std::string();
-	const std::string &after_bom = bom ? bom_stripped : markdown_str_in;
+	// not a character of the document, and cmark does not see it either (#21).
+	const std::string_view after_bom = std::string_view(markdown_str_in).substr(SkipBOM(markdown_str_in));
 
 	// #58: frontmatter is document METADATA, not body prose. Counting it made
 	// word_count/char_count/line_count -- and reading_time_minutes, derived from
@@ -545,13 +541,16 @@ MarkdownStats CalculateStats(const std::string &markdown_str_in, bool exact) {
 	// would re-inflate line_count. One point covers everything below, including
 	// CountStructuralNodes (its only caller), which keeps md_stats(doc, true)
 	// agreeing with md_extract_links / md_extract_code_blocks.
-	const std::string markdown_str = StripFrontmatter(after_bom);
+	const std::string_view markdown_str = StripFrontmatter(after_bom);
 
 	// Word count (approximate)
-	std::istringstream stream(markdown_str);
-	std::string word;
-	while (stream >> word) {
-		stats.word_count++;
+	bool in_word = false;
+	for (const char c : markdown_str) {
+		const bool is_space = std::isspace(static_cast<unsigned char>(c)) != 0;
+		if (!is_space && !in_word) {
+			stats.word_count++;
+		}
+		in_word = !is_space;
 	}
 
 	stats.char_count = markdown_str.length();
@@ -573,10 +572,12 @@ MarkdownStats CalculateStats(const std::string &markdown_str_in, bool exact) {
 	// convention (#22, ReDoS hardening).
 	stats.heading_count = 0;
 	{
-		std::istringstream heading_stream(markdown_str);
-		std::string heading_line;
 		bool in_fence = false;
-		while (std::getline(heading_stream, heading_line)) {
+		size_t line_start = 0;
+		while (line_start < markdown_str.size()) {
+			const size_t line_end = std::min(markdown_str.find('\n', line_start), markdown_str.size());
+			const std::string_view heading_line = markdown_str.substr(line_start, line_end - line_start);
+			line_start = line_end + 1;
 			// Fence toggle: optional leading whitespace then ``` or ~~~.
 			size_t p = 0;
 			while (p < heading_line.size() && (heading_line[p] == ' ' || heading_line[p] == '\t')) {
@@ -604,7 +605,7 @@ MarkdownStats CalculateStats(const std::string &markdown_str_in, bool exact) {
 	{
 		idx_t fence_count = 0;
 		size_t pos = 0;
-		while ((pos = markdown_str.find("```", pos)) != std::string::npos) {
+		while ((pos = markdown_str.find("```", pos)) != std::string_view::npos) {
 			fence_count++;
 			pos += 3;
 		}
@@ -615,7 +616,7 @@ MarkdownStats CalculateStats(const std::string &markdown_str_in, bool exact) {
 	// non-overlapping "[" non-"]"+ "]" "(" non-")"+ ")".
 	stats.link_count = 0;
 	{
-		const std::string &s = markdown_str;
+		const std::string_view s = markdown_str;
 		size_t i = 0;
 		size_t n = s.size();
 		while (i < n) {
@@ -710,7 +711,7 @@ std::string GenerateSectionId(const std::string &heading_text,
 	return id;
 }
 
-std::vector<MarkdownSection> ParseSections(const std::string &markdown_str, int32_t min_level, int32_t max_level,
+std::vector<MarkdownSection> ParseSections(std::string_view markdown_str, int32_t min_level, int32_t max_level,
                                            bool include_content, const std::string &content_mode,
                                            idx_t max_content_length) {
 	// Use the new cmark-based ExtractSections function instead of regex parsing
@@ -803,7 +804,7 @@ std::vector<CodeBlock> ExtractCodeBlocks(const std::string &markdown_str_in, con
 	return code_blocks;
 }
 
-std::vector<MarkdownSection> ExtractSections(const std::string &markdown_str, int32_t min_level, int32_t max_level,
+std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int32_t min_level, int32_t max_level,
                                              bool include_content, const std::string &content_mode,
                                              idx_t max_content_length) {
 	std::vector<MarkdownSection> sections;
@@ -814,7 +815,7 @@ std::vector<MarkdownSection> ExtractSections(const std::string &markdown_str, in
 	}
 
 	// Strip frontmatter before parsing - cmark-gfm interprets --- as setext heading
-	std::string content = StripFrontmatter(markdown_str);
+	const std::string_view content = StripFrontmatter(markdown_str);
 
 	// Default max_content_length for smart mode
 	idx_t effective_max_length = max_content_length > 0 ? max_content_length : 2000;
@@ -848,7 +849,7 @@ std::vector<MarkdownSection> ExtractSections(const std::string &markdown_str, in
 	CMarkRAII cmark;
 
 	// Parse with cmark-gfm (using content with frontmatter stripped)
-	cmark_parser_feed(cmark.parser, content.c_str(), content.length());
+	cmark_parser_feed(cmark.parser, content.data(), content.length());
 	cmark.doc = cmark_parser_finish(cmark.parser);
 	if (!cmark.doc) {
 		throw std::runtime_error("Failed to parse markdown document");
@@ -1612,7 +1613,7 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 	}
 
 	// Strip frontmatter before parsing with cmark
-	std::string body = StripFrontmatter(markdown_str);
+	const std::string_view body = StripFrontmatter(markdown_str);
 
 	// Parse with cmark-gfm (with extensions for tables)
 	EnsureCmarkExtensionsRegistered();
@@ -1624,7 +1625,7 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		cmark_parser_attach_syntax_extension(parser, table_ext);
 	}
 
-	cmark_parser_feed(parser, body.c_str(), body.length());
+	cmark_parser_feed(parser, body.data(), body.length());
 	cmark_node *doc = cmark_parser_finish(parser);
 	cmark_parser_free(parser);
 
