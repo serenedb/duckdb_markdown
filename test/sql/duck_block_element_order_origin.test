@@ -118,11 +118,11 @@ ORDER BY b.element_order;
 # =============================================================================
 
 statement ok
-COPY (SELECT E'# H\n\npara\n\n- a\n- b\n') TO '__TEST_DIR__/eo.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT E'# H\n\npara\n\n- a\n- b\n') TO '{TEST_DIR}/eo.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 query III
 SELECT min(element_order), max(element_order) - count(*) + 1, count(*) - count(DISTINCT element_order)
-FROM read_markdown_blocks('__TEST_DIR__/eo.md');
+FROM read_markdown_blocks('{TEST_DIR}/eo.md');
 ----
 0	0	0
 
