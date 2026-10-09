@@ -129,11 +129,11 @@ SELECT * FROM (VALUES
 ) AS t(kind, element_type, content, level, encoding, attributes, element_order);
 
 statement ok
-COPY test_blocks TO '__TEST_DIR__/duck_block_test.md' (FORMAT MARKDOWN, markdown_mode 'duck_block');
+COPY test_blocks TO '{TEST_DIR}/duck_block_test.md' (FORMAT MARKDOWN, markdown_mode 'duck_block');
 
 # Verify the file was created and contains expected content
 query I
-SELECT content LIKE '%# My Document%' FROM read_markdown('__TEST_DIR__/duck_block_test.md');
+SELECT content LIKE '%# My Document%' FROM read_markdown('{TEST_DIR}/duck_block_test.md');
 ----
 true
 
@@ -142,7 +142,7 @@ true
 # =============================================================================
 
 query I
-SELECT count(*) FROM read_markdown_blocks('__TEST_DIR__/duck_block_test.md');
+SELECT count(*) FROM read_markdown_blocks('{TEST_DIR}/duck_block_test.md');
 ----
 3
 
@@ -374,12 +374,12 @@ Check out [our docs](https://docs.example.com) for **more info**
 
 # Verify that read_markdown_blocks returns the new column names
 query I
-SELECT kind FROM read_markdown_blocks('__TEST_DIR__/duck_block_test.md') LIMIT 1;
+SELECT kind FROM read_markdown_blocks('{TEST_DIR}/duck_block_test.md') LIMIT 1;
 ----
 block
 
 query I
-SELECT element_type FROM read_markdown_blocks('__TEST_DIR__/duck_block_test.md') WHERE element_type = 'heading' LIMIT 1;
+SELECT element_type FROM read_markdown_blocks('{TEST_DIR}/duck_block_test.md') WHERE element_type = 'heading' LIMIT 1;
 ----
 heading
 
@@ -388,7 +388,7 @@ heading
 # never tested the origin at all. Kept as a smoke check that the column binds;
 # duck_block_element_order_origin.test is what actually pins the contract.
 query I
-SELECT element_order FROM read_markdown_blocks('__TEST_DIR__/duck_block_test.md') WHERE element_order = 1 LIMIT 1;
+SELECT element_order FROM read_markdown_blocks('{TEST_DIR}/duck_block_test.md') WHERE element_order = 1 LIMIT 1;
 ----
 1
 

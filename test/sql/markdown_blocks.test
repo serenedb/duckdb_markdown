@@ -323,10 +323,10 @@ SELECT count(DISTINCT filename) FROM read_markdown_blocks('test/data/blocks_*.md
 # =============================================================================
 
 statement ok
-COPY (SELECT '') TO '__TEST_DIR__/empty.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT '') TO '{TEST_DIR}/empty.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 query I
-SELECT count(*) FROM read_markdown_blocks('__TEST_DIR__/empty.md');
+SELECT count(*) FROM read_markdown_blocks('{TEST_DIR}/empty.md');
 ----
 0
 
@@ -335,10 +335,10 @@ SELECT count(*) FROM read_markdown_blocks('__TEST_DIR__/empty.md');
 # =============================================================================
 
 statement ok
-COPY (SELECT E'---\ntitle: Only FM\n---\n') TO '__TEST_DIR__/only_fm.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT E'---\ntitle: Only FM\n---\n') TO '{TEST_DIR}/only_fm.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 query II
-SELECT element_type, level FROM read_markdown_blocks('__TEST_DIR__/only_fm.md');
+SELECT element_type, level FROM read_markdown_blocks('{TEST_DIR}/only_fm.md');
 ----
 metadata	1
 
@@ -442,15 +442,15 @@ WHERE b.element_type = 'list_item';
 
 statement ok
 COPY (SELECT kind, element_type, content, level, encoding, attributes FROM read_markdown_blocks('test/data/blocks_basic.md'))
-TO '__TEST_DIR__/roundtrip1.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+TO '{TEST_DIR}/roundtrip1.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 statement ok
-COPY (SELECT kind, element_type, content, level, encoding, attributes FROM read_markdown_blocks('__TEST_DIR__/roundtrip1.md'))
-TO '__TEST_DIR__/roundtrip2.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY (SELECT kind, element_type, content, level, encoding, attributes FROM read_markdown_blocks('{TEST_DIR}/roundtrip1.md'))
+TO '{TEST_DIR}/roundtrip2.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Both round-trips should have same block count
 query I
-SELECT (SELECT count(*) FROM read_markdown_blocks('__TEST_DIR__/roundtrip1.md')) =
-       (SELECT count(*) FROM read_markdown_blocks('__TEST_DIR__/roundtrip2.md'));
+SELECT (SELECT count(*) FROM read_markdown_blocks('{TEST_DIR}/roundtrip1.md')) =
+       (SELECT count(*) FROM read_markdown_blocks('{TEST_DIR}/roundtrip2.md'));
 ----
 true
