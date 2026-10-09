@@ -17,23 +17,23 @@ INSERT INTO test_copy VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.0), (3, 'Charlie'
 
 # Test basic COPY TO markdown (default table mode)
 statement ok
-COPY test_copy TO '__TEST_DIR__/table_basic.md' (FORMAT MARKDOWN);
+COPY test_copy TO '{TEST_DIR}/table_basic.md' (FORMAT MARKDOWN);
 
 # Verify the file was created and has correct structure
 query I
-SELECT content LIKE '%| id |%' FROM read_text('__TEST_DIR__/table_basic.md');
+SELECT content LIKE '%| id |%' FROM read_text('{TEST_DIR}/table_basic.md');
 ----
 true
 
 # Verify header separator exists
 query I
-SELECT content LIKE '%|---:%' FROM read_text('__TEST_DIR__/table_basic.md');
+SELECT content LIKE '%|---:%' FROM read_text('{TEST_DIR}/table_basic.md');
 ----
 true
 
 # Verify data row exists
 query I
-SELECT content LIKE '%| 1 | Alice |%' FROM read_text('__TEST_DIR__/table_basic.md');
+SELECT content LIKE '%| 1 | Alice |%' FROM read_text('{TEST_DIR}/table_basic.md');
 ----
 true
 
@@ -42,10 +42,10 @@ true
 # =============================================================================
 
 statement ok
-COPY test_copy TO '__TEST_DIR__/table_explicit.md' (FORMAT MARKDOWN, markdown_mode 'table');
+COPY test_copy TO '{TEST_DIR}/table_explicit.md' (FORMAT MARKDOWN, markdown_mode 'table');
 
 query I
-SELECT content LIKE '%| id |%' FROM read_text('__TEST_DIR__/table_explicit.md');
+SELECT content LIKE '%| id |%' FROM read_text('{TEST_DIR}/table_explicit.md');
 ----
 true
 
@@ -55,7 +55,7 @@ true
 
 # Numeric columns should be right-aligned (---:)
 query I
-SELECT content LIKE '%---:|%' FROM read_text('__TEST_DIR__/table_basic.md');
+SELECT content LIKE '%---:|%' FROM read_text('{TEST_DIR}/table_basic.md');
 ----
 true
 
@@ -70,11 +70,11 @@ statement ok
 INSERT INTO pipe_test VALUES ('a|b'), ('c|d');
 
 statement ok
-COPY pipe_test TO '__TEST_DIR__/table_pipes.md' (FORMAT MARKDOWN, escape_pipes true);
+COPY pipe_test TO '{TEST_DIR}/table_pipes.md' (FORMAT MARKDOWN, escape_pipes true);
 
 # Verify pipes are escaped (check for backslash-pipe sequence)
 query I
-SELECT contains(content, 'a\|b') FROM read_text('__TEST_DIR__/table_pipes.md');
+SELECT contains(content, 'a\|b') FROM read_text('{TEST_DIR}/table_pipes.md');
 ----
 true
 
@@ -89,11 +89,11 @@ statement ok
 INSERT INTO newline_test VALUES (E'line1\nline2');
 
 statement ok
-COPY newline_test TO '__TEST_DIR__/table_newlines.md' (FORMAT MARKDOWN, escape_newlines true);
+COPY newline_test TO '{TEST_DIR}/table_newlines.md' (FORMAT MARKDOWN, escape_newlines true);
 
 # Verify newlines are converted to <br>
 query I
-SELECT content LIKE '%<br>%' FROM read_text('__TEST_DIR__/table_newlines.md');
+SELECT content LIKE '%<br>%' FROM read_text('{TEST_DIR}/table_newlines.md');
 ----
 true
 
@@ -108,11 +108,11 @@ statement ok
 INSERT INTO null_test VALUES (1, NULL), (2, 'test');
 
 statement ok
-COPY null_test TO '__TEST_DIR__/table_nulls.md' (FORMAT MARKDOWN, null_value 'N/A');
+COPY null_test TO '{TEST_DIR}/table_nulls.md' (FORMAT MARKDOWN, null_value 'N/A');
 
 # Verify null value replacement
 query I
-SELECT content LIKE '%N/A%' FROM read_text('__TEST_DIR__/table_nulls.md');
+SELECT content LIKE '%N/A%' FROM read_text('{TEST_DIR}/table_nulls.md');
 ----
 true
 
@@ -121,11 +121,11 @@ true
 # =============================================================================
 
 statement ok
-COPY test_copy TO '__TEST_DIR__/table_noheader.md' (FORMAT MARKDOWN, header false);
+COPY test_copy TO '{TEST_DIR}/table_noheader.md' (FORMAT MARKDOWN, header false);
 
 # File should NOT have column names as first line
 query I
-SELECT content NOT LIKE '%| id | name |%' FROM read_text('__TEST_DIR__/table_noheader.md');
+SELECT content NOT LIKE '%| id | name |%' FROM read_text('{TEST_DIR}/table_noheader.md');
 ----
 true
 
@@ -143,22 +143,22 @@ INSERT INTO sections VALUES
     (1, 'Conclusion', 'Final thoughts.');
 
 statement ok
-COPY sections TO '__TEST_DIR__/doc_basic.md' (FORMAT MARKDOWN, markdown_mode 'document');
+COPY sections TO '{TEST_DIR}/doc_basic.md' (FORMAT MARKDOWN, markdown_mode 'document');
 
 # Verify headings are rendered
 query I
-SELECT content LIKE '%# Introduction%' FROM read_text('__TEST_DIR__/doc_basic.md');
+SELECT content LIKE '%# Introduction%' FROM read_text('{TEST_DIR}/doc_basic.md');
 ----
 true
 
 query I
-SELECT content LIKE '%## Details%' FROM read_text('__TEST_DIR__/doc_basic.md');
+SELECT content LIKE '%## Details%' FROM read_text('{TEST_DIR}/doc_basic.md');
 ----
 true
 
 # Verify content is included
 query I
-SELECT content LIKE '%This is the intro.%' FROM read_text('__TEST_DIR__/doc_basic.md');
+SELECT content LIKE '%This is the intro.%' FROM read_text('{TEST_DIR}/doc_basic.md');
 ----
 true
 
@@ -167,18 +167,18 @@ true
 # =============================================================================
 
 statement ok
-COPY sections TO '__TEST_DIR__/doc_frontmatter.md' (FORMAT MARKDOWN, markdown_mode 'document', frontmatter 'title: Test Doc
+COPY sections TO '{TEST_DIR}/doc_frontmatter.md' (FORMAT MARKDOWN, markdown_mode 'document', frontmatter 'title: Test Doc
 author: Test Author');
 
 # Verify frontmatter delimiters
 query I
-SELECT content LIKE '%---%title:%---%' OR content LIKE '%---%' FROM read_text('__TEST_DIR__/doc_frontmatter.md');
+SELECT content LIKE '%---%title:%---%' OR content LIKE '%---%' FROM read_text('{TEST_DIR}/doc_frontmatter.md');
 ----
 true
 
 # Verify frontmatter content
 query I
-SELECT content LIKE '%title: Test Doc%' FROM read_text('__TEST_DIR__/doc_frontmatter.md');
+SELECT content LIKE '%title: Test Doc%' FROM read_text('{TEST_DIR}/doc_frontmatter.md');
 ----
 true
 
@@ -193,16 +193,16 @@ statement ok
 INSERT INTO custom_sections VALUES (1, 'Custom Title', 'Custom body text.');
 
 statement ok
-COPY custom_sections TO '__TEST_DIR__/doc_custom.md' (FORMAT MARKDOWN, markdown_mode 'document',
+COPY custom_sections TO '{TEST_DIR}/doc_custom.md' (FORMAT MARKDOWN, markdown_mode 'document',
     level_column 'depth', title_column 'heading', content_column 'body');
 
 query I
-SELECT content LIKE '%# Custom Title%' FROM read_text('__TEST_DIR__/doc_custom.md');
+SELECT content LIKE '%# Custom Title%' FROM read_text('{TEST_DIR}/doc_custom.md');
 ----
 true
 
 query I
-SELECT content LIKE '%Custom body text.%' FROM read_text('__TEST_DIR__/doc_custom.md');
+SELECT content LIKE '%Custom body text.%' FROM read_text('{TEST_DIR}/doc_custom.md');
 ----
 true
 
@@ -219,13 +219,13 @@ INSERT INTO doc_with_fm VALUES
     (1, 'Body', 'Main content');
 
 statement ok
-COPY doc_with_fm TO '__TEST_DIR__/doc_level0.md' (FORMAT MARKDOWN, markdown_mode 'document');
+COPY doc_with_fm TO '{TEST_DIR}/doc_level0.md' (FORMAT MARKDOWN, markdown_mode 'document');
 
 # Level 0 should be output as frontmatter block
 query I
 SELECT content LIKE '%---
 title: Generated Doc
----%' FROM read_text('__TEST_DIR__/doc_level0.md');
+---%' FROM read_text('{TEST_DIR}/doc_level0.md');
 ----
 true
 
@@ -237,11 +237,11 @@ statement ok
 CREATE TABLE empty_table (id INTEGER, name VARCHAR);
 
 statement ok
-COPY empty_table TO '__TEST_DIR__/table_empty.md' (FORMAT MARKDOWN);
+COPY empty_table TO '{TEST_DIR}/table_empty.md' (FORMAT MARKDOWN);
 
 # Should still have header
 query I
-SELECT content LIKE '%| id |%' FROM read_text('__TEST_DIR__/table_empty.md');
+SELECT content LIKE '%| id |%' FROM read_text('{TEST_DIR}/table_empty.md');
 ----
 true
 
@@ -250,15 +250,15 @@ true
 # =============================================================================
 
 statement ok
-COPY (SELECT 1 as a, 'test' as b) TO '__TEST_DIR__/query_copy.md' (FORMAT MARKDOWN);
+COPY (SELECT 1 as a, 'test' as b) TO '{TEST_DIR}/query_copy.md' (FORMAT MARKDOWN);
 
 query I
-SELECT content LIKE '%| a | b |%' FROM read_text('__TEST_DIR__/query_copy.md');
+SELECT content LIKE '%| a | b |%' FROM read_text('{TEST_DIR}/query_copy.md');
 ----
 true
 
 query I
-SELECT content LIKE '%| 1 | test |%' FROM read_text('__TEST_DIR__/query_copy.md');
+SELECT content LIKE '%| 1 | test |%' FROM read_text('{TEST_DIR}/query_copy.md');
 ----
 true
 
@@ -277,35 +277,35 @@ INSERT INTO blocks_test VALUES
     ('block', 'blockquote', 'A wise quote', 1, 'text', MAP{}, 3);
 
 statement ok
-COPY blocks_test TO '__TEST_DIR__/blocks_basic.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY blocks_test TO '{TEST_DIR}/blocks_basic.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Verify heading
 query I
-SELECT content LIKE '%# My Document%' FROM read_text('__TEST_DIR__/blocks_basic.md');
+SELECT content LIKE '%# My Document%' FROM read_text('{TEST_DIR}/blocks_basic.md');
 ----
 true
 
 # Verify paragraph
 query I
-SELECT content LIKE '%This is a paragraph.%' FROM read_text('__TEST_DIR__/blocks_basic.md');
+SELECT content LIKE '%This is a paragraph.%' FROM read_text('{TEST_DIR}/blocks_basic.md');
 ----
 true
 
 # Verify code block with language
 query I
-SELECT content LIKE '%```python%' FROM read_text('__TEST_DIR__/blocks_basic.md');
+SELECT content LIKE '%```python%' FROM read_text('{TEST_DIR}/blocks_basic.md');
 ----
 true
 
 # Verify code content
 query I
-SELECT content LIKE '%print("hello")%' FROM read_text('__TEST_DIR__/blocks_basic.md');
+SELECT content LIKE '%print("hello")%' FROM read_text('{TEST_DIR}/blocks_basic.md');
 ----
 true
 
 # Verify blockquote
 query I
-SELECT content LIKE '%> A wise quote%' FROM read_text('__TEST_DIR__/blocks_basic.md');
+SELECT content LIKE '%> A wise quote%' FROM read_text('{TEST_DIR}/blocks_basic.md');
 ----
 true
 
@@ -322,10 +322,10 @@ INSERT INTO blocks_fm VALUES
     ('block', 'heading', 'Content', 1, 'text', MAP{}, 1);
 
 statement ok
-COPY blocks_fm TO '__TEST_DIR__/blocks_fm.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY blocks_fm TO '{TEST_DIR}/blocks_fm.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content LIKE '%---%title: Test%---%' FROM read_text('__TEST_DIR__/blocks_fm.md');
+SELECT content LIKE '%---%title: Test%---%' FROM read_text('{TEST_DIR}/blocks_fm.md');
 ----
 true
 
@@ -341,10 +341,10 @@ INSERT INTO blocks_list VALUES
     ('block', 'list', '["Item 1", "Item 2", "Item 3"]', 1, 'json', MAP{'ordered': 'false'}, 0);
 
 statement ok
-COPY blocks_list TO '__TEST_DIR__/blocks_list.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY blocks_list TO '{TEST_DIR}/blocks_list.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content LIKE '%- Item 1%' FROM read_text('__TEST_DIR__/blocks_list.md');
+SELECT content LIKE '%- Item 1%' FROM read_text('{TEST_DIR}/blocks_list.md');
 ----
 true
 
@@ -362,10 +362,10 @@ INSERT INTO blocks_hr VALUES
     ('block', 'heading', 'After', 1, 'text', MAP{}, 2);
 
 statement ok
-COPY blocks_hr TO '__TEST_DIR__/blocks_hr.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY blocks_hr TO '{TEST_DIR}/blocks_hr.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content LIKE '%---%' FROM read_text('__TEST_DIR__/blocks_hr.md');
+SELECT content LIKE '%---%' FROM read_text('{TEST_DIR}/blocks_hr.md');
 ----
 true
 
@@ -376,16 +376,16 @@ true
 # Read blocks from a file and write them back
 statement ok
 COPY (SELECT kind, element_type, content, level, encoding, attributes FROM read_markdown_blocks('test/data/blocks_basic.md'))
-TO '__TEST_DIR__/blocks_roundtrip.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+TO '{TEST_DIR}/blocks_roundtrip.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Verify the roundtrip preserved structure
 query I
-SELECT content LIKE '%# Hello%' FROM read_text('__TEST_DIR__/blocks_roundtrip.md');
+SELECT content LIKE '%# Hello%' FROM read_text('{TEST_DIR}/blocks_roundtrip.md');
 ----
 true
 
 query I
-SELECT content LIKE '%```python%' FROM read_text('__TEST_DIR__/blocks_roundtrip.md');
+SELECT content LIKE '%```python%' FROM read_text('{TEST_DIR}/blocks_roundtrip.md');
 ----
 true
 
@@ -401,15 +401,15 @@ INSERT INTO blocks_olist VALUES
     ('block', 'list', '["First", "Second", "Third"]', 1, 'json', MAP{'ordered': 'true', 'start': '5'}, 0);
 
 statement ok
-COPY blocks_olist TO '__TEST_DIR__/blocks_olist.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY blocks_olist TO '{TEST_DIR}/blocks_olist.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content LIKE '%5. First%' FROM read_text('__TEST_DIR__/blocks_olist.md');
+SELECT content LIKE '%5. First%' FROM read_text('{TEST_DIR}/blocks_olist.md');
 ----
 true
 
 query I
-SELECT content LIKE '%6. Second%' FROM read_text('__TEST_DIR__/blocks_olist.md');
+SELECT content LIKE '%6. Second%' FROM read_text('{TEST_DIR}/blocks_olist.md');
 ----
 true
 
@@ -425,11 +425,11 @@ INSERT INTO blocks_code_nolang VALUES
     ('block', 'code', 'plain code here', NULL, 'text', MAP{}, 0);
 
 statement ok
-COPY blocks_code_nolang TO '__TEST_DIR__/blocks_code_nolang.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY blocks_code_nolang TO '{TEST_DIR}/blocks_code_nolang.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Should have ``` without language
 query I
-SELECT content LIKE E'```\nplain code here\n```%' FROM read_text('__TEST_DIR__/blocks_code_nolang.md');
+SELECT content LIKE E'```\nplain code here\n```%' FROM read_text('{TEST_DIR}/blocks_code_nolang.md');
 ----
 true
 
@@ -450,20 +450,20 @@ INSERT INTO blocks_headings VALUES
     ('block', 'heading', 'Level 6', 6, 'text', MAP{}, 5);
 
 statement ok
-COPY blocks_headings TO '__TEST_DIR__/blocks_headings.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY blocks_headings TO '{TEST_DIR}/blocks_headings.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content LIKE '%# Level 1%' FROM read_text('__TEST_DIR__/blocks_headings.md');
+SELECT content LIKE '%# Level 1%' FROM read_text('{TEST_DIR}/blocks_headings.md');
 ----
 true
 
 query I
-SELECT content LIKE '%## Level 2%' FROM read_text('__TEST_DIR__/blocks_headings.md');
+SELECT content LIKE '%## Level 2%' FROM read_text('{TEST_DIR}/blocks_headings.md');
 ----
 true
 
 query I
-SELECT content LIKE '%###### Level 6%' FROM read_text('__TEST_DIR__/blocks_headings.md');
+SELECT content LIKE '%###### Level 6%' FROM read_text('{TEST_DIR}/blocks_headings.md');
 ----
 true
 
@@ -479,10 +479,10 @@ INSERT INTO blocks_special VALUES
     ('block', 'paragraph', 'Text with "quotes" and special chars: <>&', NULL, 'text', MAP{}, 0);
 
 statement ok
-COPY blocks_special TO '__TEST_DIR__/blocks_special.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY blocks_special TO '{TEST_DIR}/blocks_special.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content LIKE '%"quotes"%' FROM read_text('__TEST_DIR__/blocks_special.md');
+SELECT content LIKE '%"quotes"%' FROM read_text('{TEST_DIR}/blocks_special.md');
 ----
 true
 
@@ -492,27 +492,27 @@ true
 
 statement ok
 COPY (SELECT kind, element_type, content, level, encoding, attributes FROM read_markdown_blocks('test/data/blocks_table.md'))
-TO '__TEST_DIR__/blocks_table_roundtrip.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+TO '{TEST_DIR}/blocks_table_roundtrip.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Should render as proper markdown table, not JSON
 query I
-SELECT content LIKE '%| Name | Age |%' FROM read_text('__TEST_DIR__/blocks_table_roundtrip.md');
+SELECT content LIKE '%| Name | Age |%' FROM read_text('{TEST_DIR}/blocks_table_roundtrip.md');
 ----
 true
 
 query I
-SELECT content LIKE '%|---|---|%' FROM read_text('__TEST_DIR__/blocks_table_roundtrip.md');
+SELECT content LIKE '%|---|---|%' FROM read_text('{TEST_DIR}/blocks_table_roundtrip.md');
 ----
 true
 
 query I
-SELECT content LIKE '%| Alice | 30 |%' FROM read_text('__TEST_DIR__/blocks_table_roundtrip.md');
+SELECT content LIKE '%| Alice | 30 |%' FROM read_text('{TEST_DIR}/blocks_table_roundtrip.md');
 ----
 true
 
 # Should NOT contain raw JSON
 query I
-SELECT content NOT LIKE '%"headers"%' FROM read_text('__TEST_DIR__/blocks_table_roundtrip.md');
+SELECT content NOT LIKE '%"headers"%' FROM read_text('{TEST_DIR}/blocks_table_roundtrip.md');
 ----
 true
 
@@ -553,7 +553,7 @@ DROP TABLE blocks_hr;
 # =============================================================================
 
 statement error
-COPY (SELECT 1 as x) TO '__TEST_DIR__/invalid.md' (FORMAT MARKDOWN, markdown_mode 'invalid');
+COPY (SELECT 1 as x) TO '{TEST_DIR}/invalid.md' (FORMAT MARKDOWN, markdown_mode 'invalid');
 ----
 Invalid markdown_mode
 
@@ -562,7 +562,7 @@ Invalid markdown_mode
 # =============================================================================
 
 statement error
-COPY (SELECT 'content' as content) TO '__TEST_DIR__/missing.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY (SELECT 'content' as content) TO '{TEST_DIR}/missing.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 ----
 Blocks mode requires a 'element_type' column
 
@@ -571,7 +571,7 @@ Blocks mode requires a 'element_type' column
 # =============================================================================
 
 statement error
-COPY (SELECT 'title' as title, 'content' as content) TO '__TEST_DIR__/missing.md' (FORMAT MARKDOWN, markdown_mode 'document');
+COPY (SELECT 'title' as title, 'content' as content) TO '{TEST_DIR}/missing.md' (FORMAT MARKDOWN, markdown_mode 'document');
 ----
 Document mode requires a 'level' column
 
@@ -580,10 +580,10 @@ Document mode requires a 'level' column
 # =============================================================================
 
 statement ok
-COPY (SELECT 'heading' as element_type, 'Minimal' as content) TO '__TEST_DIR__/minimal.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY (SELECT 'heading' as element_type, 'Minimal' as content) TO '{TEST_DIR}/minimal.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content LIKE '%# Minimal%' FROM read_text('__TEST_DIR__/minimal.md');
+SELECT content LIKE '%# Minimal%' FROM read_text('{TEST_DIR}/minimal.md');
 ----
 true
 
@@ -593,11 +593,11 @@ true
 
 statement ok
 COPY (SELECT 'heading' as type, 'Custom' as body, 2 as depth)
-TO '__TEST_DIR__/custom_cols.md' (FORMAT MARKDOWN, markdown_mode 'blocks',
+TO '{TEST_DIR}/custom_cols.md' (FORMAT MARKDOWN, markdown_mode 'blocks',
     element_type_column 'type', content_column 'body', level_column 'depth');
 
 query I
-SELECT content LIKE '%## Custom%' FROM read_text('__TEST_DIR__/custom_cols.md');
+SELECT content LIKE '%## Custom%' FROM read_text('{TEST_DIR}/custom_cols.md');
 ----
 true
 
@@ -619,11 +619,11 @@ INSERT INTO inline_test VALUES
     ('inline', 'text', ' text.', 1, 'text', MAP{}, 4);
 
 statement ok
-COPY inline_test TO '__TEST_DIR__/inline_basic.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_test TO '{TEST_DIR}/inline_basic.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Verify inline elements are concatenated without newlines between them
 query I
-SELECT content = 'This has **bold** and *italic* text.' FROM read_text('__TEST_DIR__/inline_basic.md');
+SELECT content = 'This has **bold** and *italic* text.' FROM read_text('{TEST_DIR}/inline_basic.md');
 ----
 true
 
@@ -641,11 +641,11 @@ INSERT INTO inline_link VALUES
     ('inline', 'text', ' for more.', 1, 'text', MAP{}, 2);
 
 statement ok
-COPY inline_link TO '__TEST_DIR__/inline_link.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_link TO '{TEST_DIR}/inline_link.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Verify link is rendered correctly inline
 query I
-SELECT content = 'Check out [our docs](https://example.com) for more.' FROM read_text('__TEST_DIR__/inline_link.md');
+SELECT content = 'Check out [our docs](https://example.com) for more.' FROM read_text('{TEST_DIR}/inline_link.md');
 ----
 true
 
@@ -661,10 +661,10 @@ INSERT INTO inline_link_title VALUES
     ('inline', 'link', 'Click here', 1, 'text', MAP{'href': 'https://example.com', 'title': 'Example Site'}, 0);
 
 statement ok
-COPY inline_link_title TO '__TEST_DIR__/inline_link_title.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_link_title TO '{TEST_DIR}/inline_link_title.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content = '[Click here](https://example.com "Example Site")' FROM read_text('__TEST_DIR__/inline_link_title.md');
+SELECT content = '[Click here](https://example.com "Example Site")' FROM read_text('{TEST_DIR}/inline_link_title.md');
 ----
 true
 
@@ -686,17 +686,17 @@ INSERT INTO mixed_elements VALUES
     ('block', 'paragraph', 'A regular paragraph.', 1, 'text', MAP{}, 6);
 
 statement ok
-COPY mixed_elements TO '__TEST_DIR__/mixed_elements.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY mixed_elements TO '{TEST_DIR}/mixed_elements.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Verify heading is a block (has trailing newlines)
 query I
-SELECT content LIKE E'# Document with Rich Content\n\n%' FROM read_text('__TEST_DIR__/mixed_elements.md');
+SELECT content LIKE E'# Document with Rich Content\n\n%' FROM read_text('{TEST_DIR}/mixed_elements.md');
 ----
 true
 
 # Verify inline elements are concatenated and properly separated from next block
 query I
-SELECT content LIKE E'%This has **bold** and *italic* text.\n\nA regular paragraph.\n\n' FROM read_text('__TEST_DIR__/mixed_elements.md');
+SELECT content LIKE E'%This has **bold** and *italic* text.\n\nA regular paragraph.\n\n' FROM read_text('{TEST_DIR}/mixed_elements.md');
 ----
 true
 
@@ -720,11 +720,11 @@ INSERT INTO block_inline_block VALUES
     ('block', 'paragraph', 'Final paragraph.', 1, 'text', MAP{}, 8);
 
 statement ok
-COPY block_inline_block TO '__TEST_DIR__/block_inline_block.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY block_inline_block TO '{TEST_DIR}/block_inline_block.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Verify the full structure with proper transitions
 query I
-SELECT content = E'# Section Title\n\nSome **important** text here.\n\n```python\nprint("hello")\n```\n\nMore *styled* content.\n\nFinal paragraph.\n\n' FROM read_text('__TEST_DIR__/block_inline_block.md');
+SELECT content = E'# Section Title\n\nSome **important** text here.\n\n```python\nprint("hello")\n```\n\nMore *styled* content.\n\nFinal paragraph.\n\n' FROM read_text('{TEST_DIR}/block_inline_block.md');
 ----
 true
 
@@ -743,11 +743,11 @@ INSERT INTO consecutive_blocks VALUES
     ('block', 'paragraph', 'Second paragraph.', 1, 'text', MAP{}, 3);
 
 statement ok
-COPY consecutive_blocks TO '__TEST_DIR__/consecutive_blocks.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY consecutive_blocks TO '{TEST_DIR}/consecutive_blocks.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Verify blocks are properly separated
 query I
-SELECT content = E'# First Heading\n\nFirst paragraph.\n\n## Second Heading\n\nSecond paragraph.\n\n' FROM read_text('__TEST_DIR__/consecutive_blocks.md');
+SELECT content = E'# First Heading\n\nFirst paragraph.\n\n## Second Heading\n\nSecond paragraph.\n\n' FROM read_text('{TEST_DIR}/consecutive_blocks.md');
 ----
 true
 
@@ -765,11 +765,11 @@ INSERT INTO inline_only VALUES
     ('inline', 'text', ' content.', 1, 'text', MAP{}, 2);
 
 statement ok
-COPY inline_only TO '__TEST_DIR__/inline_only.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_only TO '{TEST_DIR}/inline_only.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Inline-only content should concatenate without trailing newlines
 query I
-SELECT content = 'Just **inline** content.' FROM read_text('__TEST_DIR__/inline_only.md');
+SELECT content = 'Just **inline** content.' FROM read_text('{TEST_DIR}/inline_only.md');
 ----
 true
 
@@ -786,10 +786,10 @@ INSERT INTO block_only VALUES
     ('block', 'paragraph', 'Content.', 1, 'text', MAP{}, 1);
 
 statement ok
-COPY block_only TO '__TEST_DIR__/block_only.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY block_only TO '{TEST_DIR}/block_only.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content = E'# Title\n\nContent.\n\n' FROM read_text('__TEST_DIR__/block_only.md');
+SELECT content = E'# Title\n\nContent.\n\n' FROM read_text('{TEST_DIR}/block_only.md');
 ----
 true
 
@@ -809,11 +809,11 @@ INSERT INTO inline_to_list VALUES
     ('block', 'list', '["Apples", "Bananas", "Oranges"]', 1, 'json', MAP{'ordered': 'false'}, 4);
 
 statement ok
-COPY inline_to_list TO '__TEST_DIR__/inline_to_list.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_to_list TO '{TEST_DIR}/inline_to_list.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Verify proper separation between inline and list
 query I
-SELECT content = E'# Shopping List\n\nHere are the **items** we need:\n\n- Apples\n- Bananas\n- Oranges\n\n' FROM read_text('__TEST_DIR__/inline_to_list.md');
+SELECT content = E'# Shopping List\n\nHere are the **items** we need:\n\n- Apples\n- Bananas\n- Oranges\n\n' FROM read_text('{TEST_DIR}/inline_to_list.md');
 ----
 true
 
@@ -840,29 +840,29 @@ INSERT INTO complex_doc VALUES
     ('inline', 'text', '.', 1, 'text', MAP{}, 11);
 
 statement ok
-COPY complex_doc TO '__TEST_DIR__/complex_doc.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY complex_doc TO '{TEST_DIR}/complex_doc.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Verify heading
 query I
-SELECT content LIKE E'# My Document\n\n%' FROM read_text('__TEST_DIR__/complex_doc.md');
+SELECT content LIKE E'# My Document\n\n%' FROM read_text('{TEST_DIR}/complex_doc.md');
 ----
 true
 
 # Verify inline with link followed by heading
 query I
-SELECT content LIKE E'%This is an **introduction** with a [link](https://example.com).\n\n## Code Example\n\n%' FROM read_text('__TEST_DIR__/complex_doc.md');
+SELECT content LIKE E'%This is an **introduction** with a [link](https://example.com).\n\n## Code Example\n\n%' FROM read_text('{TEST_DIR}/complex_doc.md');
 ----
 true
 
 # Verify code block followed by heading
 query I
-SELECT content LIKE E'%```python\nx = 1\n```\n\n## Conclusion\n\n%' FROM read_text('__TEST_DIR__/complex_doc.md');
+SELECT content LIKE E'%```python\nx = 1\n```\n\n## Conclusion\n\n%' FROM read_text('{TEST_DIR}/complex_doc.md');
 ----
 true
 
 # Verify final inline content (no trailing block means no trailing newlines)
 query I
-SELECT content LIKE '%The *end*.' FROM read_text('__TEST_DIR__/complex_doc.md');
+SELECT content LIKE '%The *end*.' FROM read_text('{TEST_DIR}/complex_doc.md');
 ----
 true
 
@@ -879,10 +879,10 @@ INSERT INTO inline_to_quote VALUES
     ('block', 'blockquote', 'To be or not to be.', 1, 'text', MAP{}, 1);
 
 statement ok
-COPY inline_to_quote TO '__TEST_DIR__/inline_to_quote.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_to_quote TO '{TEST_DIR}/inline_to_quote.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content = E'As someone once said:\n\n> To be or not to be.\n\n' FROM read_text('__TEST_DIR__/inline_to_quote.md');
+SELECT content = E'As someone once said:\n\n> To be or not to be.\n\n' FROM read_text('{TEST_DIR}/inline_to_quote.md');
 ----
 true
 
@@ -904,10 +904,10 @@ INSERT INTO inline_hr_inline VALUES
     ('inline', 'text', '.', 1, 'text', MAP{}, 6);
 
 statement ok
-COPY inline_hr_inline TO '__TEST_DIR__/inline_hr_inline.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_hr_inline TO '{TEST_DIR}/inline_hr_inline.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content = E'Section one **content**.\n\n---\n\nSection two *content*.' FROM read_text('__TEST_DIR__/inline_hr_inline.md');
+SELECT content = E'Section one **content**.\n\n---\n\nSection two *content*.' FROM read_text('{TEST_DIR}/inline_hr_inline.md');
 ----
 true
 
@@ -926,11 +926,11 @@ INSERT INTO inline_to_table VALUES
     ('block', 'table', '{"headers": ["Name", "Value"], "rows": [["A", "1"], ["B", "2"]]}', 1, 'json', MAP{}, 3);
 
 statement ok
-COPY inline_to_table TO '__TEST_DIR__/inline_to_table.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_to_table TO '{TEST_DIR}/inline_to_table.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Verify inline followed by table with proper separation
 query I
-SELECT content LIKE E'Here is the **data**:\n\n| Name | Value |\n|---|---|\n| A | 1 |\n| B | 2 |\n\n' FROM read_text('__TEST_DIR__/inline_to_table.md');
+SELECT content LIKE E'Here is the **data**:\n\n| Name | Value |\n|---|---|\n| A | 1 |\n| B | 2 |\n\n' FROM read_text('{TEST_DIR}/inline_to_table.md');
 ----
 true
 
@@ -979,10 +979,10 @@ INSERT INTO inline_code VALUES
     ('inline', 'text', ' function.', 1, 'text', MAP{}, 2);
 
 statement ok
-COPY inline_code TO '__TEST_DIR__/inline_code.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_code TO '{TEST_DIR}/inline_code.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content = 'Use the `print()` function.' FROM read_text('__TEST_DIR__/inline_code.md');
+SELECT content = 'Use the `print()` function.' FROM read_text('{TEST_DIR}/inline_code.md');
 ----
 true
 
@@ -1000,10 +1000,10 @@ INSERT INTO inline_strike VALUES
     ('inline', 'text', ' correct.', 1, 'text', MAP{}, 2);
 
 statement ok
-COPY inline_strike TO '__TEST_DIR__/inline_strike.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_strike TO '{TEST_DIR}/inline_strike.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content = 'This is ~~wrong~~ correct.' FROM read_text('__TEST_DIR__/inline_strike.md');
+SELECT content = 'This is ~~wrong~~ correct.' FROM read_text('{TEST_DIR}/inline_strike.md');
 ----
 true
 
@@ -1019,10 +1019,10 @@ INSERT INTO inline_image VALUES
     ('inline', 'image', 'alt text', 1, 'text', MAP{'src': 'image.png'}, 0);
 
 statement ok
-COPY inline_image TO '__TEST_DIR__/inline_image.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_image TO '{TEST_DIR}/inline_image.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content = '![alt text](image.png)' FROM read_text('__TEST_DIR__/inline_image.md');
+SELECT content = '![alt text](image.png)' FROM read_text('{TEST_DIR}/inline_image.md');
 ----
 true
 
@@ -1040,10 +1040,10 @@ INSERT INTO inline_math VALUES
     ('inline', 'text', ' is famous.', 1, 'text', MAP{}, 2);
 
 statement ok
-COPY inline_math TO '__TEST_DIR__/inline_math.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_math TO '{TEST_DIR}/inline_math.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content = 'The formula $E=mc^2$ is famous.' FROM read_text('__TEST_DIR__/inline_math.md');
+SELECT content = 'The formula $E=mc^2$ is famous.' FROM read_text('{TEST_DIR}/inline_math.md');
 ----
 true
 
@@ -1059,10 +1059,10 @@ INSERT INTO block_math VALUES
     ('inline', 'math', 'x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}', 1, 'text', MAP{'display': 'block'}, 0);
 
 statement ok
-COPY block_math TO '__TEST_DIR__/block_math.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY block_math TO '{TEST_DIR}/block_math.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content = '$$x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$' FROM read_text('__TEST_DIR__/block_math.md');
+SELECT content = '$$x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$' FROM read_text('{TEST_DIR}/block_math.md');
 ----
 true
 
@@ -1081,10 +1081,10 @@ INSERT INTO inline_super_sub VALUES
     ('inline', 'superscript', '2', 1, 'text', MAP{}, 3);
 
 statement ok
-COPY inline_super_sub TO '__TEST_DIR__/inline_super_sub.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY inline_super_sub TO '{TEST_DIR}/inline_super_sub.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
-SELECT content = 'H~2~O and x^2^' FROM read_text('__TEST_DIR__/inline_super_sub.md');
+SELECT content = 'H~2~O and x^2^' FROM read_text('{TEST_DIR}/inline_super_sub.md');
 ----
 true
 
@@ -1101,11 +1101,11 @@ INSERT INTO no_kind VALUES
     ('paragraph', 'Content here.', 1, 'text', MAP{}, 1);
 
 statement ok
-COPY no_kind TO '__TEST_DIR__/no_kind.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY no_kind TO '{TEST_DIR}/no_kind.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Without kind column, defaults to block behavior
 query I
-SELECT content LIKE E'# Title\n\nContent here.\n\n' FROM read_text('__TEST_DIR__/no_kind.md');
+SELECT content LIKE E'# Title\n\nContent here.\n\n' FROM read_text('{TEST_DIR}/no_kind.md');
 ----
 true
 

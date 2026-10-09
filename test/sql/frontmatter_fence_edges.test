@@ -40,39 +40,39 @@ require markdown
 # =============================================================================
 
 statement ok
-COPY (SELECT E'---\n---\n# Body\n') TO '__TEST_DIR__/fm_empty.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT E'---\n---\n# Body\n') TO '{TEST_DIR}/fm_empty.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 # Was: hr, hr, heading -- two thematic breaks conjured from the fences.
 query II
-SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_empty.md') ORDER BY element_order;
+SELECT element_type, content FROM read_markdown_blocks('{TEST_DIR}/fm_empty.md') ORDER BY element_order;
 ----
 heading	Body
 
 statement ok
-COPY (SELECT E'+++\n+++\n# Body\n') TO '__TEST_DIR__/fm_empty_toml.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT E'+++\n+++\n# Body\n') TO '{TEST_DIR}/fm_empty_toml.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 # Was: a paragraph whose inline text was "+++", "", "+++" -- Hugo's empty block
 # rendered as literal prose.
 query II
-SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_empty_toml.md') ORDER BY element_order;
+SELECT element_type, content FROM read_markdown_blocks('{TEST_DIR}/fm_empty_toml.md') ORDER BY element_order;
 ----
 heading	Body
 
 statement ok
-COPY (SELECT E'---\r\n---\r\n# Body\r\n') TO '__TEST_DIR__/fm_empty_crlf.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT E'---\r\n---\r\n# Body\r\n') TO '{TEST_DIR}/fm_empty_crlf.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 # Same block under CRLF line endings.
 query II
-SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_empty_crlf.md') ORDER BY element_order;
+SELECT element_type, content FROM read_markdown_blocks('{TEST_DIR}/fm_empty_crlf.md') ORDER BY element_order;
 ----
 heading	Body
 
 # An empty block and nothing else is an empty document, not two rules.
 statement ok
-COPY (SELECT E'---\n---\n') TO '__TEST_DIR__/fm_empty_only.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT E'---\n---\n') TO '{TEST_DIR}/fm_empty_only.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 query I
-SELECT count(*) FROM read_markdown_blocks('__TEST_DIR__/fm_empty_only.md');
+SELECT count(*) FROM read_markdown_blocks('{TEST_DIR}/fm_empty_only.md');
 ----
 0
 
@@ -88,7 +88,7 @@ SELECT cardinality(md_extract_metadata(E'---\n---\n# Body'));
 # =============================================================================
 
 statement ok
-COPY (SELECT E'---\ntitle: x\n----\n# Body\n') TO '__TEST_DIR__/fm_fourdash.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT E'---\ntitle: x\n----\n# Body\n') TO '{TEST_DIR}/fm_fourdash.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 # `----` does not close a `---` block, so this block is unterminated and there is
 # no frontmatter -- `title: x` and its underline are a setext heading, which is
@@ -97,7 +97,7 @@ COPY (SELECT E'---\ntitle: x\n----\n# Body\n') TO '__TEST_DIR__/fm_fourdash.md' 
 # Was: metadata "title: x", then an empty `list` and `list_item` built out of the
 # surplus '-' that the prefix match left behind, then the heading.
 query II
-SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_fourdash.md') ORDER BY element_order;
+SELECT element_type, content FROM read_markdown_blocks('{TEST_DIR}/fm_fourdash.md') ORDER BY element_order;
 ----
 hr	NULL
 heading	title: x
@@ -127,10 +127,10 @@ SELECT md_extract_frontmatter(E'---\ntitle: x\n---\t\n# Body') = 'title: x';
 true
 
 statement ok
-COPY (SELECT E'---\ntitle: x\n--- \n# Body\n') TO '__TEST_DIR__/fm_close_ws.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT E'---\ntitle: x\n--- \n# Body\n') TO '{TEST_DIR}/fm_close_ws.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 query II
-SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_close_ws.md') ORDER BY element_order;
+SELECT element_type, content FROM read_markdown_blocks('{TEST_DIR}/fm_close_ws.md') ORDER BY element_order;
 ----
 metadata	title: x
 heading	Body
@@ -140,12 +140,12 @@ heading	Body
 # =============================================================================
 
 statement ok
-COPY (SELECT E'--- \ntitle: x\n---\n# Body\n') TO '__TEST_DIR__/fm_open_ws.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT E'--- \ntitle: x\n---\n# Body\n') TO '{TEST_DIR}/fm_open_ws.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 # Was: hr, heading "title: x", heading "Body" -- the metadata silently became a
 # setext heading in the body.
 query II
-SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_open_ws.md') ORDER BY element_order;
+SELECT element_type, content FROM read_markdown_blocks('{TEST_DIR}/fm_open_ws.md') ORDER BY element_order;
 ----
 metadata	title: x
 heading	Body
@@ -160,13 +160,13 @@ x
 # =============================================================================
 
 statement ok
-COPY (SELECT E'----\nintro text\n---\nafter\n') TO '__TEST_DIR__/fm_loose_open.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT E'----\nintro text\n---\nafter\n') TO '{TEST_DIR}/fm_loose_open.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 # A document that merely OPENS with a four-dash rule is not a frontmatter block.
 # Accepting it would swallow everything up to the next `---` as unparsed
 # metadata and silently truncate the document to whatever followed.
 query II
-SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_loose_open.md') ORDER BY element_order;
+SELECT element_type, content FROM read_markdown_blocks('{TEST_DIR}/fm_loose_open.md') ORDER BY element_order;
 ----
 hr	NULL
 heading	intro text
@@ -237,10 +237,10 @@ SELECT md_extract_frontmatter(E'---\ntitle: x\n...\n# Body') = 'title: x';
 true
 
 statement ok
-COPY (SELECT E'---\ntitle: x\n...\n# Body\n') TO '__TEST_DIR__/fm_dots.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT E'---\ntitle: x\n...\n# Body\n') TO '{TEST_DIR}/fm_dots.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 query II
-SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_dots.md') ORDER BY element_order;
+SELECT element_type, content FROM read_markdown_blocks('{TEST_DIR}/fm_dots.md') ORDER BY element_order;
 ----
 metadata	title: x
 heading	Body
@@ -248,7 +248,7 @@ heading	Body
 # Still the YAML dialect: `...` is a YAML marker, not a third fence style, so
 # the block must not be relabelled.
 query I
-SELECT encoding FROM read_markdown_blocks('__TEST_DIR__/fm_dots.md') WHERE element_type = 'metadata';
+SELECT encoding FROM read_markdown_blocks('{TEST_DIR}/fm_dots.md') WHERE element_type = 'metadata';
 ----
 yaml
 
@@ -279,9 +279,9 @@ true
 
 # An empty block closed with `...` is still an empty block, not two rules.
 statement ok
-COPY (SELECT E'---\n...\n# Body\n') TO '__TEST_DIR__/fm_dots_empty.md' (FORMAT CSV, HEADER false, QUOTE '');
+COPY (SELECT E'---\n...\n# Body\n') TO '{TEST_DIR}/fm_dots_empty.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 query II
-SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_dots_empty.md') ORDER BY element_order;
+SELECT element_type, content FROM read_markdown_blocks('{TEST_DIR}/fm_dots_empty.md') ORDER BY element_order;
 ----
 heading	Body
