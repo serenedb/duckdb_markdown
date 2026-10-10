@@ -14,6 +14,18 @@ namespace duckdb {
 
 using namespace duckdb_yyjson;
 
+struct YyjsonDocFree {
+	void operator()(yyjson_doc *doc) const {
+		yyjson_doc_free(doc);
+	}
+};
+
+using YyjsonDoc = unique_ptr<yyjson_doc, YyjsonDocFree>;
+
+static YyjsonDoc ReadJson(const string &content) {
+	return YyjsonDoc(yyjson_read(content.c_str(), content.size(), 0));
+}
+
 // Claims in this file about ANOTHER repository's behaviour carry a date and,
 // where they came from someone else, the label RELAYED. A reason has no expiry
 // and no attribution unless it is given one: two comments here were true when
@@ -69,11 +81,11 @@ vector<string> DuckBlockFunctions::ParseJsonListItems(const string &content) {
 	if (content.empty()) {
 		return items;
 	}
-	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	auto doc = ReadJson(content);
 	if (!doc) {
 		return items;
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc);
+	yyjson_val *root = yyjson_doc_get_root(doc.get());
 	if (yyjson_is_arr(root)) {
 		size_t idx, max;
 		yyjson_val *val;
@@ -83,7 +95,6 @@ vector<string> DuckBlockFunctions::ParseJsonListItems(const string &content) {
 			}
 		}
 	}
-	yyjson_doc_free(doc);
 	return items;
 }
 
@@ -91,11 +102,11 @@ void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &h
 	if (content.empty()) {
 		return;
 	}
-	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	auto doc = ReadJson(content);
 	if (!doc) {
 		return;
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc);
+	yyjson_val *root = yyjson_doc_get_root(doc.get());
 	if (yyjson_is_obj(root)) {
 		yyjson_val *headers_val = yyjson_obj_get(root, "headers");
 		if (headers_val && yyjson_is_arr(headers_val)) {
@@ -129,7 +140,6 @@ void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &h
 			}
 		}
 	}
-	yyjson_doc_free(doc);
 }
 
 static string ExtractPandocTextFromVal(yyjson_val *val, int depth) {
@@ -241,11 +251,11 @@ static bool ParsePandocListItems(const string &content, vector<string> &items, i
 	if (content.empty()) {
 		return false;
 	}
-	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	auto doc = ReadJson(content);
 	if (!doc) {
 		return false;
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc);
+	yyjson_val *root = yyjson_doc_get_root(doc.get());
 	yyjson_val *item_array = root;
 	if (yyjson_is_arr(root) && yyjson_arr_size(root) == 2) {
 		yyjson_val *first = yyjson_arr_get(root, 0);
@@ -271,7 +281,6 @@ static bool ParsePandocListItems(const string &content, vector<string> &items, i
 			}
 		}
 	}
-	yyjson_doc_free(doc);
 	return !items.empty();
 }
 
@@ -282,12 +291,12 @@ static string ExtractPandocBlocksText(const string &content) {
 	if (content.empty()) {
 		return "";
 	}
-	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	auto doc = ReadJson(content);
 	if (!doc) {
 		return "";
 	}
 	string result;
-	yyjson_val *root = yyjson_doc_get_root(doc);
+	yyjson_val *root = yyjson_doc_get_root(doc.get());
 	if (yyjson_is_arr(root)) {
 		size_t idx, max;
 		yyjson_val *block;
@@ -302,7 +311,6 @@ static string ExtractPandocBlocksText(const string &content) {
 			result += text;
 		}
 	}
-	yyjson_doc_free(doc);
 	return result;
 }
 
@@ -313,11 +321,11 @@ static bool ParseDefinitionList(const string &content, vector<std::pair<string, 
 	if (content.empty()) {
 		return false;
 	}
-	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	auto doc = ReadJson(content);
 	if (!doc) {
 		return false;
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc);
+	yyjson_val *root = yyjson_doc_get_root(doc.get());
 	if (yyjson_is_arr(root)) {
 		size_t idx, max;
 		yyjson_val *entry;
@@ -341,7 +349,6 @@ static bool ParseDefinitionList(const string &content, vector<std::pair<string, 
 			entries.emplace_back(std::move(term), std::move(definitions));
 		}
 	}
-	yyjson_doc_free(doc);
 	return !entries.empty();
 }
 
@@ -366,25 +373,22 @@ string DuckBlockFunctions::ExtractPandocText(const string &content, int depth) {
 	if (content.empty()) {
 		return "";
 	}
-	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	auto doc = ReadJson(content);
 	if (!doc) {
 		return "";
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc);
-	string result = ExtractPandocTextFromVal(root, depth);
-	yyjson_doc_free(doc);
-	return result;
+	return ExtractPandocTextFromVal(yyjson_doc_get_root(doc.get()), depth);
 }
 
 bool DuckBlockFunctions::IsPandocTableFormat(const string &content) {
 	if (content.empty()) {
 		return false;
 	}
-	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	auto doc = ReadJson(content);
 	if (!doc) {
 		return false;
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc);
+	yyjson_val *root = yyjson_doc_get_root(doc.get());
 	bool is_table = false;
 	if (yyjson_is_arr(root)) {
 		size_t sz = yyjson_arr_size(root);
@@ -407,7 +411,6 @@ bool DuckBlockFunctions::IsPandocTableFormat(const string &content) {
 			}
 		}
 	}
-	yyjson_doc_free(doc);
 	return is_table;
 }
 
@@ -423,13 +426,12 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 	if (content.empty()) {
 		return;
 	}
-	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	auto doc = ReadJson(content);
 	if (!doc) {
 		return;
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc);
+	yyjson_val *root = yyjson_doc_get_root(doc.get());
 	if (!yyjson_is_arr(root)) {
-		yyjson_doc_free(doc);
 		return;
 	}
 
@@ -549,8 +551,6 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 		headers = rows[0];
 		rows.erase(rows.begin());
 	}
-
-	yyjson_doc_free(doc);
 }
 
 //===--------------------------------------------------------------------===//
