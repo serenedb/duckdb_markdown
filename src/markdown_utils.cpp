@@ -9,6 +9,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <map>
+#include <memory>
 
 // Include actual Markdown parser headers
 #include <cmark-gfm.h>
@@ -20,6 +21,35 @@ namespace duckdb {
 using Vocab = DuckBlockVocabulary;
 
 namespace markdown_utils {
+
+struct CmarkParserFree {
+	void operator()(cmark_parser *parser) const {
+		cmark_parser_free(parser);
+	}
+};
+
+struct CmarkNodeFree {
+	void operator()(cmark_node *node) const {
+		cmark_node_free(node);
+	}
+};
+
+struct CmarkIterFree {
+	void operator()(cmark_iter *iter) const {
+		cmark_iter_free(iter);
+	}
+};
+
+struct CmarkTextFree {
+	void operator()(char *text) const {
+		free(text);
+	}
+};
+
+using CmarkParser = std::unique_ptr<cmark_parser, CmarkParserFree>;
+using CmarkDoc = std::unique_ptr<cmark_node, CmarkNodeFree>;
+using CmarkIter = std::unique_ptr<cmark_iter, CmarkIterFree>;
+using CmarkText = std::unique_ptr<char, CmarkTextFree>;
 
 //===--------------------------------------------------------------------===//
 // Linear (non-backtracking) scanners
@@ -298,7 +328,8 @@ std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavo
 	}
 
 	// Parse the markdown document
-	cmark_parser *parser = cmark_parser_new(options);
+	const CmarkParser parser_owner {cmark_parser_new(options)};
+	cmark_parser *parser = parser_owner.get();
 
 	if (flavor == MarkdownFlavor::GFM) {
 		// Add GitHub extensions
@@ -324,17 +355,12 @@ std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavo
 	cmark_parser_feed(parser, content.data(), content.length());
 
 	// Parse and render
-	cmark_node *doc = cmark_parser_finish(parser);
-	char *html = cmark_render_html(doc, options, nullptr);
+	const CmarkDoc doc {cmark_parser_finish(parser)};
+	const CmarkText html {cmark_render_html(doc.get(), options, nullptr)};
 
 	// cmark can return NULL on allocation failure; guard against constructing
 	// a std::string from a NULL pointer (undefined behaviour).
-	std::string result(html ? html : "");
-
-	// Clean up
-	free(html);
-	cmark_node_free(doc);
-	cmark_parser_free(parser);
+	std::string result(html ? html.get() : "");
 
 	return result;
 }
@@ -357,20 +383,15 @@ std::string MarkdownToText(const std::string &markdown_str) {
 	}
 
 	// Parse the markdown document
-	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
-	cmark_parser_feed(parser, content.data(), content.length());
-	cmark_node *doc = cmark_parser_finish(parser);
+	const CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
+	cmark_parser_feed(parser.get(), content.data(), content.length());
+	const CmarkDoc doc {cmark_parser_finish(parser.get())};
 
 	// Render as plain text
-	char *text = cmark_render_plaintext(doc, CMARK_OPT_DEFAULT, 0);
+	const CmarkText text {cmark_render_plaintext(doc.get(), CMARK_OPT_DEFAULT, 0)};
 
 	// Guard against a NULL return (see MarkdownToHTML).
-	std::string result(text ? text : "");
-
-	// Clean up
-	free(text);
-	cmark_node_free(doc);
-	cmark_parser_free(parser);
+	std::string result(text ? text.get() : "");
 
 	return result;
 }
@@ -495,10 +516,11 @@ static void CountStructuralNodes(std::string_view markdown_str, MarkdownStats &s
 		return;
 	}
 
-	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
-	cmark_parser_feed(parser, markdown_str.data(), markdown_str.length());
-	cmark_node *doc = cmark_parser_finish(parser);
-	cmark_iter *iter = cmark_iter_new(doc);
+	const CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
+	cmark_parser_feed(parser.get(), markdown_str.data(), markdown_str.length());
+	const CmarkDoc doc {cmark_parser_finish(parser.get())};
+	const CmarkIter iter_owner {cmark_iter_new(doc.get())};
+	cmark_iter *iter = iter_owner.get();
 
 	cmark_event_type ev_type;
 	while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
@@ -521,10 +543,6 @@ static void CountStructuralNodes(std::string_view markdown_str, MarkdownStats &s
 			break;
 		}
 	}
-
-	cmark_iter_free(iter);
-	cmark_node_free(doc);
-	cmark_parser_free(parser);
 }
 
 MarkdownStats CalculateStats(const std::string &markdown_str_in, bool exact) {
@@ -752,12 +770,13 @@ std::vector<CodeBlock> ExtractCodeBlocks(const std::string &markdown_str_in, con
 	const std::string markdown_str = StripFrontmatterKeepLines(markdown_str_in);
 
 	// Parse with cmark-gfm
-	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
-	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
-	cmark_node *doc = cmark_parser_finish(parser);
+	const CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
+	cmark_parser_feed(parser.get(), markdown_str.c_str(), markdown_str.length());
+	const CmarkDoc doc {cmark_parser_finish(parser.get())};
 
 	// Walk the AST looking for code block nodes
-	cmark_iter *iter = cmark_iter_new(doc);
+	const CmarkIter iter_owner {cmark_iter_new(doc.get())};
+	cmark_iter *iter = iter_owner.get();
 	cmark_event_type ev_type;
 
 	while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
@@ -795,11 +814,6 @@ std::vector<CodeBlock> ExtractCodeBlocks(const std::string &markdown_str_in, con
 			}
 		}
 	}
-
-	// Cleanup
-	cmark_iter_free(iter);
-	cmark_node_free(doc);
-	cmark_parser_free(parser);
 
 	return code_blocks;
 }
@@ -895,11 +909,10 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 
 		// Extract heading text by rendering to plain text
 		// This handles all inline elements: code, emphasis, strong, links, etc.
-		char *rendered_title = cmark_render_plaintext(heading, CMARK_OPT_DEFAULT, 0);
+		const CmarkText rendered_title {cmark_render_plaintext(heading, CMARK_OPT_DEFAULT, 0)};
 		std::string title_text;
 		if (rendered_title) {
-			title_text = rendered_title;
-			free(rendered_title);
+			title_text = rendered_title.get();
 			// Remove trailing newline that cmark adds
 			while (!title_text.empty() && (title_text.back() == '\n' || title_text.back() == '\r')) {
 				title_text.pop_back();
@@ -991,10 +1004,9 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 				}
 
 				// Convert this node back to markdown text
-				char *rendered = cmark_render_commonmark(current, CMARK_OPT_DEFAULT, 0);
+				const CmarkText rendered {cmark_render_commonmark(current, CMARK_OPT_DEFAULT, 0)};
 				if (rendered) {
-					content_text += rendered;
-					free(rendered);
+					content_text += rendered.get();
 				}
 
 				current = cmark_node_next(current);
@@ -1025,10 +1037,9 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 					}
 					if (sub_level == section.level + 1) {
 						// Direct child subsection
-						char *sub_title = cmark_render_plaintext(heading_nodes[j], CMARK_OPT_DEFAULT, 0);
+						const CmarkText sub_title {cmark_render_plaintext(heading_nodes[j], CMARK_OPT_DEFAULT, 0)};
 						if (sub_title) {
-							std::string sub_title_str = sub_title;
-							free(sub_title);
+							std::string sub_title_str = sub_title.get();
 							while (!sub_title_str.empty() &&
 							       (sub_title_str.back() == '\n' || sub_title_str.back() == '\r')) {
 								sub_title_str.pop_back();
@@ -1057,11 +1068,10 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 
 // Helper to render a node's content as plain text
 static std::string RenderNodeContent(cmark_node *node) {
-	char *text = cmark_render_plaintext(node, CMARK_OPT_DEFAULT, 0);
+	const CmarkText text {cmark_render_plaintext(node, CMARK_OPT_DEFAULT, 0)};
 	if (!text)
 		return "";
-	std::string result(text);
-	free(text);
+	std::string result(text.get());
 	// Trim trailing newlines
 	while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
 		result.pop_back();
@@ -1617,24 +1627,24 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 
 	// Parse with cmark-gfm (with extensions for tables)
 	EnsureCmarkExtensionsRegistered();
-	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
+	CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
 
 	// Enable GFM extensions
 	cmark_syntax_extension *table_ext = cmark_find_syntax_extension("table");
 	if (table_ext) {
-		cmark_parser_attach_syntax_extension(parser, table_ext);
+		cmark_parser_attach_syntax_extension(parser.get(), table_ext);
 	}
 
-	cmark_parser_feed(parser, body.data(), body.length());
-	cmark_node *doc = cmark_parser_finish(parser);
-	cmark_parser_free(parser);
+	cmark_parser_feed(parser.get(), body.data(), body.length());
+	const CmarkDoc doc {cmark_parser_finish(parser.get())};
+	parser.reset();
 
 	if (!doc) {
 		return blocks;
 	}
 
 	// Iterate through top-level children of the document
-	cmark_node *child = cmark_node_first_child(doc);
+	cmark_node *child = cmark_node_first_child(doc.get());
 
 	while (child) {
 		cmark_node_type node_type = cmark_node_get_type(child);
@@ -1688,10 +1698,9 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 				block.content = simple; // single plain-text run
 			} else {
 				// Legacy path: render inline formatting back to markdown text.
-				char *md = cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0);
+				const CmarkText md {cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0)};
 				if (md) {
-					block.content = md;
-					free(md);
+					block.content = md.get();
 					// Trim trailing newlines
 					while (!block.content.empty() && (block.content.back() == '\n' || block.content.back() == '\r')) {
 						block.content.pop_back();
@@ -1756,10 +1765,9 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 				emitted_directly = true;
 			} else {
 				// Legacy path: render blockquote content back to markdown, strip '>'.
-				char *md = cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0);
+				const CmarkText md {cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0)};
 				if (md) {
-					block.content = md;
-					free(md);
+					block.content = md.get();
 					// Remove leading > and trim
 					std::string result;
 					std::istringstream iss(block.content);
@@ -1873,10 +1881,9 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 			} else {
 				// Unknown block type - render as raw
 				block.block_type = "raw";
-				char *md = cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0);
+				const CmarkText md {cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0)};
 				if (md) {
-					block.content = md;
-					free(md);
+					block.content = md.get();
 				}
 				if (type_string) {
 					block.attributes["original_type"] = type_string;
@@ -1897,7 +1904,6 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		child = cmark_node_next(child);
 	}
 
-	cmark_node_free(doc);
 	return blocks;
 }
 
@@ -1968,12 +1974,13 @@ std::vector<MarkdownLink> ExtractLinks(const std::string &markdown_str_in) {
 	}
 
 	// Parse with cmark-gfm
-	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
-	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
-	cmark_node *doc = cmark_parser_finish(parser);
+	const CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
+	cmark_parser_feed(parser.get(), markdown_str.c_str(), markdown_str.length());
+	const CmarkDoc doc {cmark_parser_finish(parser.get())};
 
 	// Walk the AST looking for link nodes
-	cmark_iter *iter = cmark_iter_new(doc);
+	const CmarkIter iter_owner {cmark_iter_new(doc.get())};
+	cmark_iter *iter = iter_owner.get();
 	cmark_event_type ev_type;
 
 	while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
@@ -2015,11 +2022,6 @@ std::vector<MarkdownLink> ExtractLinks(const std::string &markdown_str_in) {
 		}
 	}
 
-	// Cleanup
-	cmark_iter_free(iter);
-	cmark_node_free(doc);
-	cmark_parser_free(parser);
-
 	return links;
 }
 
@@ -2035,12 +2037,13 @@ std::vector<MarkdownImage> ExtractImages(const std::string &markdown_str_in) {
 	const std::string markdown_str = StripFrontmatterKeepLines(markdown_str_in);
 
 	// Parse with cmark-gfm
-	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
-	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
-	cmark_node *doc = cmark_parser_finish(parser);
+	const CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
+	cmark_parser_feed(parser.get(), markdown_str.c_str(), markdown_str.length());
+	const CmarkDoc doc {cmark_parser_finish(parser.get())};
 
 	// Walk the AST looking for image nodes
-	cmark_iter *iter = cmark_iter_new(doc);
+	const CmarkIter iter_owner {cmark_iter_new(doc.get())};
+	cmark_iter *iter = iter_owner.get();
 	cmark_event_type ev_type;
 
 	while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
@@ -2074,11 +2077,6 @@ std::vector<MarkdownImage> ExtractImages(const std::string &markdown_str_in) {
 		}
 	}
 
-	// Cleanup
-	cmark_iter_free(iter);
-	cmark_node_free(doc);
-	cmark_parser_free(parser);
-
 	return images;
 }
 
@@ -2106,24 +2104,24 @@ std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str_in) {
 	// line_number is an absolute line in the input -- matching ExtractLinks and
 	// ExtractImages, which also use cmark's native line tracking.
 	EnsureCmarkExtensionsRegistered();
-	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
+	CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
 	if (!parser) {
 		return tables;
 	}
 	cmark_syntax_extension *table_ext = cmark_find_syntax_extension("table");
 	if (table_ext) {
-		cmark_parser_attach_syntax_extension(parser, table_ext);
+		cmark_parser_attach_syntax_extension(parser.get(), table_ext);
 	}
-	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
-	cmark_node *doc = cmark_parser_finish(parser);
-	cmark_parser_free(parser);
+	cmark_parser_feed(parser.get(), markdown_str.c_str(), markdown_str.length());
+	const CmarkDoc doc {cmark_parser_finish(parser.get())};
+	parser.reset();
 	if (!doc) {
 		return tables;
 	}
 
-	cmark_iter *iter = cmark_iter_new(doc);
+	const CmarkIter iter_owner {cmark_iter_new(doc.get())};
+	cmark_iter *iter = iter_owner.get();
 	if (!iter) {
-		cmark_node_free(doc);
 		return tables;
 	}
 
@@ -2216,9 +2214,6 @@ std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str_in) {
 		table.num_rows = table.rows.size();
 		tables.push_back(std::move(table));
 	}
-
-	cmark_iter_free(iter);
-	cmark_node_free(doc);
 
 	return tables;
 }
