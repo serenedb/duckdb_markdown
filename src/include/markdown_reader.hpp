@@ -59,6 +59,7 @@ public:
 		bool normalize_content = true;      // Whether to normalize Markdown content
 		bool include_stats = false;         // Whether to calculate document statistics
 		idx_t maximum_file_size = 16777216; // 16MB default maximum file size
+		bool ignore_errors = false;
 		markdown_utils::MarkdownFlavor flavor = markdown_utils::MarkdownFlavor::GFM;
 
 		// Column inclusion options
