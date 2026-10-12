@@ -116,6 +116,7 @@ vector<string> MarkdownReader::GetFiles(ClientContext &context, const Value &pat
 		}
 
 		if (ignore_errors) {
+			context.WarnUser(StringUtil::Format("Skipped %s, it does not exist", markdown_path));
 			return;
 		} else if (markdown_path.find("://") != string::npos && markdown_path.find("file://") != 0) {
 			throw InvalidInputException("Remote file does not exist or is not accessible: %s", markdown_path);
@@ -152,6 +153,8 @@ vector<string> MarkdownReader::GetFiles(ClientContext &context, const Value &pat
 					markdown_files.push_back(file);
 				} else if (!ignore_errors) {
 					throw InvalidInputException("File does not exist: %s", file);
+				} else {
+					context.WarnUser(StringUtil::Format("Skipped %s, it does not exist", file));
 				}
 			} catch (const NotImplementedException &) {
 				// File system doesn't support file existence checking, assume it exists
@@ -159,6 +162,8 @@ vector<string> MarkdownReader::GetFiles(ClientContext &context, const Value &pat
 			}
 		} else if (!ignore_errors) {
 			throw InvalidInputException("File is not a markdown file: %s", file);
+		} else {
+			context.WarnUser(StringUtil::Format("Skipped %s, it is not a markdown file", file));
 		}
 	}
 

@@ -1,0 +1,30 @@
+# name: test/sql/markdown_error_reporting.test
+# description: Readers fail on a file they cannot read unless ignore_errors skips it
+# group: [sql]
+
+require markdown
+
+statement error
+SELECT content FROM read_markdown(['test/md/invalid_utf8.md', 'test/markdown/simple.md']);
+----
+Error reading Markdown file test/md/invalid_utf8.md
+
+query I
+SELECT count(*) FROM read_markdown(['test/md/invalid_utf8.md', 'test/markdown/simple.md'], ignore_errors := true);
+----
+1
+
+query I
+SELECT count(*) FROM read_markdown('test/markdown/does_not_exist_xyz.md', ignore_errors := true);
+----
+0
+
+query I
+SELECT count(*) FROM read_markdown_sections('test/markdown/does_not_exist_xyz.md', ignore_errors := true);
+----
+0
+
+query I
+SELECT count(*) FROM read_markdown_blocks('test/markdown/does_not_exist_xyz.md', ignore_errors := true);
+----
+0
