@@ -125,6 +125,15 @@ static Value BuildTagsValue(const std::string &content) {
 	return Value::LIST(rows);
 }
 
+static void HandleUnreadableFile(ClientContext &context, const MarkdownReader::MarkdownReadOptions &options,
+                                 const string &file_path, const std::exception &e) {
+	const auto reason = ErrorData(e).RawMessage();
+	if (!options.ignore_errors) {
+		throw InvalidInputException("Error reading Markdown file %s: %s", file_path, reason);
+	}
+	context.WarnUser(StringUtil::Format("Skipped %s, it could not be read: %s", file_path, reason));
+}
+
 static void ParseMarkdownOptions(TableFunctionBindInput &input, MarkdownReader::MarkdownReadOptions &options) {
 	for (const auto &kv : input.named_parameters) {
 		// v2.0 keys this map by Identifier, not string: CompatNameStr spans both lines,
@@ -138,6 +147,8 @@ static void ParseMarkdownOptions(TableFunctionBindInput &input, MarkdownReader::
 			options.normalize_content = BooleanValue::Get(kv.second);
 		} else if (key == "maximum_file_size") {
 			options.maximum_file_size = UBigIntValue::Get(kv.second);
+		} else if (key == "ignore_errors") {
+			options.ignore_errors = BooleanValue::Get(kv.second);
 		} else if (key == "flavor") {
 			const auto flavor_str = StringValue::Get(kv.second);
 			if (flavor_str == "gfm") {
@@ -222,11 +233,10 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadDocumentsBind(ClientContext
 		throw InvalidInputException("read_markdown requires at least one argument");
 	}
 
-	auto &path_param = input.inputs[0];
-	result->files = GetFiles(context, path_param, false);
-
-	// Parse options
 	ParseMarkdownOptions(input, result->options);
+
+	auto &path_param = input.inputs[0];
+	result->files = GetFiles(context, path_param, result->options.ignore_errors);
 
 	// Define return columns
 	names.emplace_back("content");
@@ -360,19 +370,7 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context, Table
 			                            static_cast<unsigned long long>(e.file_size),
 			                            static_cast<unsigned long long>(e.maximum_file_size));
 		} catch (const std::exception &e) {
-			// read_markdown STAYS STRICT about everything else, deliberately. An
-			// earlier version of this change made it skip here, to match
-			// read_markdown_sections and read_markdown_blocks -- and broke
-			// markdown_malformed_inputs.test:322, which pins that an invalid-UTF-8
-			// file is "rejected with a catchable user error, not an internal error
-			// and not a crash". This handler never caught only I/O failures; it also
-			// catches content validation, and surfacing that is the tested intent.
-			//
-			// So the three readers agree on the SIZE CAP (handled above, which is
-			// the defect that was reported) and keep their existing dispositions for
-			// everything else. Making them agree on the rest is a separate decision
-			// with its own tests to change.
-			throw InvalidInputException("Error reading Markdown file %s: %s", file_path, e.what());
+			HandleUnreadableFile(context, bind_data.options, file_path, e);
 		}
 
 		bind_data.current_file_index++;
@@ -437,9 +435,9 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
 		auto [clean_path, fragment] = ParseFragmentFromPath(path_param.ToString());
 		if (!fragment.empty()) {
 			global_fragment = fragment;
-			result->files = GetFiles(context, Value(clean_path), false);
+			result->files = GetFiles(context, Value(clean_path), result->options.ignore_errors);
 		} else {
-			result->files = GetFiles(context, path_param, false);
+			result->files = GetFiles(context, path_param, result->options.ignore_errors);
 		}
 	} else if (path_param.type().id() == LogicalTypeId::LIST) {
 		// List of paths - check each for fragments
@@ -454,9 +452,10 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
 				}
 			}
 		}
-		result->files = GetFiles(context, Value::LIST(LogicalType::VARCHAR, clean_paths), false);
+		result->files =
+		    GetFiles(context, Value::LIST(LogicalType::VARCHAR, clean_paths), result->options.ignore_errors);
 	} else {
-		result->files = GetFiles(context, path_param, false);
+		result->files = GetFiles(context, path_param, result->options.ignore_errors);
 	}
 
 	// Use fragment as section_filter if not already set via parameter
@@ -508,9 +507,8 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
 			throw InvalidInputException("File %s is too large (%llu bytes, maximum is %llu bytes)", e.file_path,
 			                            static_cast<unsigned long long>(e.file_size),
 			                            static_cast<unsigned long long>(e.maximum_file_size));
-		} catch (const std::exception &) {
-			// Skip files that cannot be read, so one unreadable file does not fail a
-			// glob. A path that does not exist still raises, during resolution.
+		} catch (const std::exception &e) {
+			HandleUnreadableFile(context, result->options, file_path, e);
 			continue;
 		}
 	}
@@ -643,11 +641,10 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadBlocksBind(ClientContext &c
 		throw InvalidInputException("read_markdown_blocks requires at least one argument");
 	}
 
-	auto &path_param = input.inputs[0];
-	result->files = GetFiles(context, path_param, false);
-
-	// Parse options
 	ParseMarkdownOptions(input, result->options);
+
+	auto &path_param = input.inputs[0];
+	result->files = GetFiles(context, path_param, result->options.ignore_errors);
 
 	// Pre-process all files to extract blocks (flattened)
 	for (const auto &file_path : result->files) {
@@ -665,9 +662,8 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadBlocksBind(ClientContext &c
 			throw InvalidInputException("File %s is too large (%llu bytes, maximum is %llu bytes)", e.file_path,
 			                            static_cast<unsigned long long>(e.file_size),
 			                            static_cast<unsigned long long>(e.maximum_file_size));
-		} catch (const std::exception &) {
-			// Skip files that cannot be read, so one unreadable file does not fail a
-			// glob. A path that does not exist still raises, during resolution.
+		} catch (const std::exception &e) {
+			HandleUnreadableFile(context, result->options, file_path, e);
 			continue;
 		}
 	}
@@ -851,6 +847,7 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	                             {"include_stats", LogicalType(LogicalTypeId::BOOLEAN)},
 	                             {"normalize_content", LogicalType(LogicalTypeId::BOOLEAN)},
 	                             {"maximum_file_size", LogicalType(LogicalTypeId::UBIGINT)},
+	                             {"ignore_errors", LogicalType(LogicalTypeId::BOOLEAN)},
 	                             {"extract_extensions", LogicalType(LogicalTypeId::VARCHAR)},
 	                             {"flavor", LogicalType(LogicalTypeId::VARCHAR)},
 	                             {"include_filepath", LogicalType(LogicalTypeId::BOOLEAN)},
@@ -874,6 +871,7 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	                             {"include_stats", LogicalType(LogicalTypeId::BOOLEAN)},
 	                             {"normalize_content", LogicalType(LogicalTypeId::BOOLEAN)},
 	                             {"maximum_file_size", LogicalType(LogicalTypeId::UBIGINT)},
+	                             {"ignore_errors", LogicalType(LogicalTypeId::BOOLEAN)},
 	                             {"extract_extensions", LogicalType(LogicalTypeId::VARCHAR)},
 	                             {"flavor", LogicalType(LogicalTypeId::VARCHAR)},
 	                             {"include_content", LogicalType(LogicalTypeId::BOOLEAN)},
@@ -903,6 +901,7 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	                             {"extract_metadata", LogicalType(LogicalTypeId::BOOLEAN)},
 	                             {"normalize_content", LogicalType(LogicalTypeId::BOOLEAN)},
 	                             {"maximum_file_size", LogicalType(LogicalTypeId::UBIGINT)},
+	                             {"ignore_errors", LogicalType(LogicalTypeId::BOOLEAN)},
 	                             {"extract_extensions", LogicalType(LogicalTypeId::VARCHAR)},
 	                             {"include_filepath", LogicalType(LogicalTypeId::BOOLEAN)},
 	                             {"filename", LogicalType(LogicalTypeId::BOOLEAN)}, // Alias for include_filepath
