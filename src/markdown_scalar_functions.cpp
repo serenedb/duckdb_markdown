@@ -7,8 +7,17 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
+#include "duckdb/common/error_data.hpp"
 
 namespace duckdb {
+
+namespace {
+
+[[noreturn]] void ThrowMarkdownError(const char *action, const std::exception &e) {
+	throw InvalidInputException("Error %s: %s", action, ErrorData(e).RawMessage());
+}
+
+} // namespace
 
 void MarkdownFunctions::Register(ExtensionLoader &loader) {
 	RegisterValidationFunction(loader);
@@ -76,7 +85,7 @@ void MarkdownFunctions::RegisterConversionFunctions(ExtensionLoader &loader) {
 				        const std::string html_str = markdown_utils::MarkdownToHTML(md_str.GetString());
 				        return StringVector::AddString(result, html_str.c_str(), html_str.length());
 			        } catch (const std::exception &e) {
-				        throw InvalidInputException("Error converting Markdown to HTML: %s", e.what());
+				        ThrowMarkdownError("converting Markdown to HTML", e);
 			        }
 		        });
 	    });
@@ -95,7 +104,7 @@ void MarkdownFunctions::RegisterConversionFunctions(ExtensionLoader &loader) {
 				        const std::string text_str = markdown_utils::MarkdownToText(md_str.GetString());
 				        return StringVector::AddString(result, text_str.c_str(), text_str.length());
 			        } catch (const std::exception &e) {
-				        throw InvalidInputException("Error converting Markdown to text: %s", e.what());
+				        ThrowMarkdownError("converting Markdown to text", e);
 			        }
 		        });
 	    });
@@ -152,24 +161,18 @@ void MarkdownFunctions::RegisterMarkdownTypeFunctions(ExtensionLoader &loader) {
 		                               auto &input = args.data[0];
 
 		                               for (idx_t row_idx = 0; row_idx < args.size(); row_idx++) {
-			                               try {
-				                               Value value = input.GetValue(row_idx);
+			                               Value value = input.GetValue(row_idx);
 
-				                               // Convert value to Markdown representation
-				                               std::string md_str;
-				                               if (value.IsNull()) {
-					                               md_str = "";
-				                               } else {
-					                               // Basic conversion - could be more sophisticated
-					                               md_str = value.ToString();
-				                               }
-
-				                               result.SetValue(row_idx, Value(md_str));
-			                               } catch (const std::exception &e) {
-				                               result.SetValue(row_idx, Value(""));
-			                               } catch (...) {
-				                               result.SetValue(row_idx, Value(""));
+			                               // Convert value to Markdown representation
+			                               std::string md_str;
+			                               if (value.IsNull()) {
+				                               md_str = "";
+			                               } else {
+				                               // Basic conversion - could be more sophisticated
+				                               md_str = value.ToString();
 			                               }
+
+			                               result.SetValue(row_idx, Value(md_str));
 		                               }
 	                               });
 
@@ -243,7 +246,7 @@ void ExecuteStats(DataChunk &args, Vector &result, bool has_exact_arg) {
 
 			result.SetValue(row_idx, StatsValue(markdown_utils::CalculateStats(md_str, exact)));
 		} catch (const std::exception &e) {
-			result.SetValue(row_idx, EmptyStatsValue());
+			ThrowMarkdownError("computing Markdown stats", e);
 		}
 	}
 }
@@ -272,6 +275,9 @@ void MarkdownFunctions::RegisterStatsFunctions(ExtensionLoader &loader) {
 	ScalarFunction md_stats_exact_fun(
 	    "md_stats", {markdown_type, LogicalType::BOOLEAN}, stats_struct_type,
 	    [](DataChunk &args, ExpressionState &state, Vector &result) { ExecuteStats(args, result, true); });
+
+	md_stats_fun.SetFallible();
+	md_stats_exact_fun.SetFallible();
 
 	ScalarFunctionSet stats_set("md_stats");
 	stats_set.AddFunction(md_stats_fun);
@@ -313,7 +319,7 @@ void MarkdownFunctions::RegisterStatsFunctions(ExtensionLoader &loader) {
 				            markdown_utils::ExtractSection(markdown_str.GetString(), section_id_str.GetString(), false);
 				        return StringVector::AddString(result, section_content);
 			        } catch (const std::exception &e) {
-				        return string_t();
+				        ThrowMarkdownError("extracting a Markdown section", e);
 			        }
 		        });
 	    });
@@ -352,12 +358,14 @@ void MarkdownFunctions::RegisterStatsFunctions(ExtensionLoader &loader) {
 				        markdown_utils::ExtractSection(markdown_str, section_id_str, include_subsections);
 				    result.SetValue(i, Value(section_content));
 			    } catch (const std::exception &e) {
-				    result.SetValue(i, Value(""));
+				    ThrowMarkdownError("extracting a Markdown section", e);
 			    }
 		    }
 	    });
 
 	ScalarFunctionSet extract_sec_set("md_extract_section");
+	md_extract_section.SetFallible();
+	md_extract_section_with_subsections.SetFallible();
 	extract_sec_set.AddFunction(md_extract_section);
 	extract_sec_set.AddFunction(md_extract_section_with_subsections);
 
@@ -439,11 +447,12 @@ void MarkdownFunctions::RegisterMetadataFunctions(ExtensionLoader &loader) {
 				    auto metadata = markdown_utils::ExtractMetadata(md_str);
 				    result.SetValue(i, markdown_utils::MetadataToMap(metadata));
 			    } catch (const std::exception &e) {
-				    result.SetValue(i, empty_map);
+				    ThrowMarkdownError("extracting Markdown metadata", e);
 			    }
 		    }
 	    });
 
+	md_extract_metadata_fun.SetFallible();
 	CreateScalarFunctionInfo metadata_info(std::move(md_extract_metadata_fun));
 	metadata_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 	FunctionDescription metadata_desc;
@@ -481,11 +490,12 @@ void MarkdownFunctions::RegisterMetadataFunctions(ExtensionLoader &loader) {
 					                                          result.SetValue(i, Value(raw));
 				                                          }
 			                                          } catch (const std::exception &e) {
-				                                          result.SetValue(i, Value(LogicalType::VARCHAR));
+				                                          ThrowMarkdownError("extracting Markdown frontmatter", e);
 			                                          }
 		                                          }
 	                                          });
 
+	md_extract_frontmatter_fun.SetFallible();
 	CreateScalarFunctionInfo frontmatter_info(std::move(md_extract_frontmatter_fun));
 	frontmatter_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 	FunctionDescription frontmatter_desc;
