@@ -5,6 +5,7 @@
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "fast_float/fast_float.h"
 #include "yyjson.hpp"
 #include "duck_block_vocabulary.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
@@ -59,6 +60,16 @@ static constexpr int MAX_PANDOC_DEPTH = 200;
 //===--------------------------------------------------------------------===//
 // Helper Functions
 //===--------------------------------------------------------------------===//
+
+static int ParseIntAttribute(const char *name, const string &value) {
+	int result;
+	const char *end = value.data() + value.size();
+	auto parsed = fast_float::from_chars(value.data(), end, result);
+	if (parsed.ec != std::errc() || parsed.ptr != end) {
+		throw InvalidInputException("duck_block attribute %s is not an integer: '%s'", name, value);
+	}
+	return result;
+}
 
 string DuckBlockFunctions::GetAttribute(const Value &attributes, const string &key) {
 	if (attributes.IsNull() || attributes.type().id() != LogicalTypeId::MAP) {
@@ -763,11 +774,7 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 		int32_t heading_level = 1;
 		string heading_level_attr = GetAttribute(attributes, Vocab::ATTR_HEADING_LEVEL);
 		if (!heading_level_attr.empty()) {
-			try {
-				heading_level = std::stoi(heading_level_attr);
-			} catch (...) {
-				heading_level = 1;
-			}
+			heading_level = ParseIntAttribute(Vocab::ATTR_HEADING_LEVEL, heading_level_attr);
 		} else if (level > 0 && level <= 6) {
 			heading_level = level;
 		}
@@ -835,10 +842,7 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 			string start_str = GetAttribute(attributes, "start");
 			const bool start_from_attribute = !start_str.empty();
 			if (start_from_attribute) {
-				try {
-					start = std::stoi(start_str);
-				} catch (...) {
-				}
+				start = ParseIntAttribute("start", start_str);
 			}
 
 			auto items = ParseJsonListItems(content);
@@ -1329,10 +1333,7 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 					int number = 1;
 					const string start_attr = GetAttributeOf(block_value, "start");
 					if (!start_attr.empty()) {
-						try {
-							number = std::stoi(start_attr);
-						} catch (...) {
-						}
+						number = ParseIntAttribute("start", start_attr);
 					}
 					const int32_t item_level = DuckBlockLevel(list_children[i]) + 1;
 					if (last_was_inline) {
@@ -2082,11 +2083,7 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 					    int32_t heading_level = 1;
 					    string heading_level_attr = GetAttribute(attributes, Vocab::ATTR_HEADING_LEVEL);
 					    if (!heading_level_attr.empty()) {
-						    try {
-							    heading_level = std::stoi(heading_level_attr);
-						    } catch (...) {
-							    heading_level = 1;
-						    }
+						    heading_level = ParseIntAttribute(Vocab::ATTR_HEADING_LEVEL, heading_level_attr);
 					    } else if (level > 0 && level <= 6) {
 						    heading_level = level;
 					    }
