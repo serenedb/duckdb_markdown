@@ -6,6 +6,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/parsed_data/copy_info.hpp"
 
@@ -271,36 +272,62 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 
 	if (bind_data.markdown_mode == WriteMarkdownBindData::MarkdownMode::TABLE) {
 		// Table mode: render rows
-		for (idx_t row_idx = 0; row_idx < input.size(); row_idx++) {
-			lstate.buffer += RenderTableRow(input, row_idx, bind_data);
+		const auto count = input.size();
+		vector<Vector> texts;
+		texts.reserve(input.ColumnCount());
+		vector<UnifiedVectorFormat> columns(input.ColumnCount());
+		for (idx_t col_idx = 0; col_idx < input.ColumnCount(); col_idx++) {
+			texts.emplace_back(LogicalType::VARCHAR);
+			VectorOperations::DefaultCast(input.data[col_idx], texts.back(), count);
+			CompatToUnifiedFormat(texts.back(), count, columns[col_idx]);
+		}
+		for (idx_t row_idx = 0; row_idx < count; row_idx++) {
+			lstate.buffer += RenderTableRow(columns, row_idx, bind_data);
 		}
 	} else if (bind_data.markdown_mode == WriteMarkdownBindData::MarkdownMode::DOCUMENT) {
 		// Document mode: render sections
-		for (idx_t row_idx = 0; row_idx < input.size(); row_idx++) {
-			// Get level
+		const auto count = input.size();
+		Vector levels(LogicalType::INTEGER);
+		Vector titles(LogicalType::VARCHAR);
+		Vector contents(LogicalType::VARCHAR);
+		UnifiedVectorFormat level_data;
+		UnifiedVectorFormat title_data;
+		UnifiedVectorFormat content_data;
+		const bool has_level = bind_data.level_col_idx != DConstants::INVALID_INDEX;
+		const bool has_title = bind_data.title_col_idx != DConstants::INVALID_INDEX;
+		const bool has_content = bind_data.content_col_idx != DConstants::INVALID_INDEX;
+		if (has_level) {
+			VectorOperations::DefaultCast(input.data[bind_data.level_col_idx], levels, count);
+			CompatToUnifiedFormat(levels, count, level_data);
+		}
+		if (has_title) {
+			VectorOperations::DefaultCast(input.data[bind_data.title_col_idx], titles, count);
+			CompatToUnifiedFormat(titles, count, title_data);
+		}
+		if (has_content) {
+			VectorOperations::DefaultCast(input.data[bind_data.content_col_idx], contents, count);
+			CompatToUnifiedFormat(contents, count, content_data);
+		}
+		for (idx_t row_idx = 0; row_idx < count; row_idx++) {
 			int32_t level = 1;
-			if (bind_data.level_col_idx != DConstants::INVALID_INDEX) {
-				auto level_val = input.data[bind_data.level_col_idx].GetValue(row_idx);
-				if (!level_val.IsNull()) {
-					level = level_val.GetValue<int32_t>();
+			if (has_level) {
+				const auto idx = level_data.sel->get_index(row_idx);
+				if (level_data.validity.RowIsValid(idx)) {
+					level = UnifiedVectorFormat::GetData<int32_t>(level_data)[idx];
 				}
 			}
-
-			// Get title
 			string title;
-			if (bind_data.title_col_idx != DConstants::INVALID_INDEX) {
-				auto title_val = input.data[bind_data.title_col_idx].GetValue(row_idx);
-				if (!title_val.IsNull()) {
-					title = title_val.ToString();
+			if (has_title) {
+				const auto idx = title_data.sel->get_index(row_idx);
+				if (title_data.validity.RowIsValid(idx)) {
+					title = UnifiedVectorFormat::GetData<string_t>(title_data)[idx].GetString();
 				}
 			}
-
-			// Get content
 			string content;
-			if (bind_data.content_col_idx != DConstants::INVALID_INDEX) {
-				auto content_val = input.data[bind_data.content_col_idx].GetValue(row_idx);
-				if (!content_val.IsNull()) {
-					content = content_val.ToString();
+			if (has_content) {
+				const auto idx = content_data.sel->get_index(row_idx);
+				if (content_data.validity.RowIsValid(idx)) {
+					content = UnifiedVectorFormat::GetData<string_t>(content_data)[idx].GetString();
 				}
 			}
 
@@ -504,17 +531,17 @@ string MarkdownCopyFunction::RenderTableSeparator(const WriteMarkdownBindData &b
 	return result;
 }
 
-string MarkdownCopyFunction::RenderTableRow(const DataChunk &chunk, idx_t row_idx,
+string MarkdownCopyFunction::RenderTableRow(const vector<UnifiedVectorFormat> &columns, idx_t row_idx,
                                             const WriteMarkdownBindData &bind_data) {
 	string result = "|";
-	for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
-		auto value = chunk.data[col_idx].GetValue(row_idx);
+	for (const auto &column : columns) {
+		const auto idx = column.sel->get_index(row_idx);
 		string cell_value;
 
-		if (value.IsNull()) {
-			cell_value = bind_data.null_value;
+		if (column.validity.RowIsValid(idx)) {
+			cell_value = UnifiedVectorFormat::GetData<string_t>(column)[idx].GetString();
 		} else {
-			cell_value = value.ToString();
+			cell_value = bind_data.null_value;
 		}
 
 		result += " " + EscapeCellValue(cell_value, bind_data) + " |";

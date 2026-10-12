@@ -490,19 +490,6 @@ std::string StripFrontmatterKeepLines(const std::string &markdown_str) {
 	return std::string(removed, '\n') + markdown_str.substr(end);
 }
 
-Value MetadataToMap(const MarkdownMetadata &metadata) {
-	// Build lists of keys and values for MAP construction
-	vector<Value> keys;
-	vector<Value> values;
-
-	for (const auto &field : metadata.custom_fields) {
-		keys.push_back(Value(field.first));
-		values.push_back(Value(field.second));
-	}
-
-	return Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR, std::move(keys), std::move(values));
-}
-
 // Structural counts taken from cmark's AST, for CalculateStats(..., exact=true).
 // Parsed with CMARK_OPT_DEFAULT and no extensions registered, which is exactly
 // what ExtractLinks and ExtractCodeBlocks do -- that is the point: in exact mode
@@ -1021,7 +1008,11 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 					smart_content = immediate_content;
 				} else {
 					// Truncate at max_length with indicator
-					smart_content = content_text.substr(0, effective_max_length);
+					auto cut = effective_max_length;
+					while (cut > 0 && (static_cast<unsigned char>(content_text[cut]) & 0xC0) == 0x80) {
+						cut--;
+					}
+					smart_content = content_text.substr(0, cut);
 					// Find last complete word/line
 					size_t last_newline = smart_content.rfind('\n');
 					if (last_newline != std::string::npos && last_newline > effective_max_length / 2) {

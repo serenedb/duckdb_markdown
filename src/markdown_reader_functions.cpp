@@ -1,6 +1,7 @@
 #include "markdown_reader.hpp"
 #include "duckdb_compat.hpp"
 #include "markdown_types.hpp"
+#include "markdown_vector_writer.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -90,39 +91,14 @@ static std::string UnescapeMarkdownInline(const std::string &in) {
 	return out;
 }
 
-static Value BuildWikilinksValue(const std::string &content) {
-	auto wikilinks = markdown_utils::ExtractWikilinks(UnescapeMarkdownInline(content));
-	vector<Value> rows;
-	for (const auto &wl : wikilinks) {
-		child_list_t<Value> sc;
-		sc.push_back({"target", Value(wl.target)});
-		sc.push_back({"alias", wl.alias.empty() ? Value(LogicalType::VARCHAR) : Value(wl.alias)});
-		sc.push_back({"anchor", wl.anchor.empty() ? Value(LogicalType::VARCHAR) : Value(wl.anchor)});
-		sc.push_back({"is_embed", Value(wl.is_embed)});
-		sc.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(wl.line_number))});
-		rows.push_back(Value::STRUCT(sc));
-	}
-	if (rows.empty()) {
-		// Empty list with a typed element so the vector cast against the bind schema works
-		// (same pattern as md_extract_links's empty case in markdown_extraction_functions.cpp).
-		return Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {});
-	}
-	return Value::LIST(rows);
+static void WriteWikilinks(Vector &result, idx_t row, const std::string &content) {
+	markdown_writer::WriteStructList(result, row, markdown_utils::ExtractWikilinks(UnescapeMarkdownInline(content)),
+	                                 markdown_writer::WriteWikilink);
 }
 
-static Value BuildTagsValue(const std::string &content) {
-	auto tags = markdown_utils::ExtractTags(UnescapeMarkdownInline(content));
-	vector<Value> rows;
-	for (const auto &t : tags) {
-		child_list_t<Value> sc;
-		sc.push_back({"tag", Value(t.tag)});
-		sc.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(t.line_number))});
-		rows.push_back(Value::STRUCT(sc));
-	}
-	if (rows.empty()) {
-		return Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {});
-	}
-	return Value::LIST(rows);
+static void WriteTags(Vector &result, idx_t row, const std::string &content) {
+	markdown_writer::WriteStructList(result, row, markdown_utils::ExtractTags(UnescapeMarkdownInline(content)),
+	                                 markdown_writer::WriteTag);
 }
 
 static void HandleUnreadableFile(ClientContext &context, const MarkdownReader::MarkdownReadOptions &options,
@@ -312,48 +288,36 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context, Table
 			idx_t column_idx = 0;
 
 			// Set content
-			output.data[column_idx].SetValue(output_idx, Value(content));
+			markdown_writer::WriteString(output.data[column_idx], output_idx, content);
 			column_idx++;
 
 			// Set metadata if requested
 			if (bind_data.options.extract_metadata) {
-				auto metadata = markdown_utils::ExtractMetadata(content);
-				output.data[column_idx].SetValue(output_idx, markdown_utils::MetadataToMap(metadata));
+				markdown_writer::WriteStringMap(output.data[column_idx], output_idx,
+				                                markdown_utils::ExtractMetadata(content).custom_fields);
 				column_idx++;
 			}
 
 			// Set stats if requested
 			if (bind_data.options.include_stats) {
-				auto stats = markdown_utils::CalculateStats(content);
-
-				// Create struct value
-				child_list_t<Value> struct_values;
-				struct_values.push_back(std::make_pair("word_count", Value::BIGINT(stats.word_count)));
-				struct_values.push_back(std::make_pair("char_count", Value::BIGINT(stats.char_count)));
-				struct_values.push_back(std::make_pair("line_count", Value::BIGINT(stats.line_count)));
-				struct_values.push_back(std::make_pair("heading_count", Value::BIGINT(stats.heading_count)));
-				struct_values.push_back(std::make_pair("code_block_count", Value::BIGINT(stats.code_block_count)));
-				struct_values.push_back(std::make_pair("link_count", Value::BIGINT(stats.link_count)));
-				struct_values.push_back(
-				    std::make_pair("reading_time_minutes", Value::DOUBLE(stats.reading_time_minutes)));
-
-				output.data[column_idx].SetValue(output_idx, Value::STRUCT(struct_values));
+				markdown_writer::WriteStats(output.data[column_idx], output_idx,
+				                            markdown_utils::CalculateStats(content));
 				column_idx++;
 			}
 
 			// Provenance, trailing -- see the bind for why.
 			if (bind_data.options.include_filepath) {
-				output.data[column_idx].SetValue(output_idx, Value(file_path));
+				markdown_writer::WriteCheckedString(output.data[column_idx], output_idx, file_path);
 				column_idx++;
 			}
 
 			// Optional add-on extractor columns
 			if (bind_data.options.extract_wikilinks) {
-				output.data[column_idx].SetValue(output_idx, BuildWikilinksValue(content));
+				WriteWikilinks(output.data[column_idx], output_idx, content);
 				column_idx++;
 			}
 			if (bind_data.options.extract_tags) {
-				output.data[column_idx].SetValue(output_idx, BuildTagsValue(content));
+				WriteTags(output.data[column_idx], output_idx, content);
 				column_idx++;
 			}
 
@@ -587,36 +551,36 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context, TableF
 
 		idx_t column_idx = 0;
 
-		output.data[column_idx].SetValue(output_idx, Value(section.id));
+		markdown_writer::WriteString(output.data[column_idx], output_idx, section.id);
 		column_idx++;
-		output.data[column_idx].SetValue(output_idx, Value(section.section_path));
+		markdown_writer::WriteString(output.data[column_idx], output_idx, section.section_path);
 		column_idx++;
-		output.data[column_idx].SetValue(output_idx, Value(section.level));
+		markdown_writer::WriteNumber(output.data[column_idx], output_idx, static_cast<int32_t>(section.level));
 		column_idx++;
-		output.data[column_idx].SetValue(output_idx, Value(actual_title));
+		markdown_writer::WriteString(output.data[column_idx], output_idx, actual_title);
 		column_idx++;
-		output.data[column_idx].SetValue(output_idx, Value(section.content));
+		markdown_writer::WriteString(output.data[column_idx], output_idx, section.content);
 		column_idx++;
-		output.data[column_idx].SetValue(output_idx, section.parent_id.empty() ? Value() : Value(section.parent_id));
+		markdown_writer::WriteOptionalString(output.data[column_idx], output_idx, section.parent_id);
 		column_idx++;
-		output.data[column_idx].SetValue(output_idx, Value::BIGINT(static_cast<int64_t>(section.start_line)));
+		markdown_writer::WriteNumber(output.data[column_idx], output_idx, static_cast<int64_t>(section.start_line));
 		column_idx++;
-		output.data[column_idx].SetValue(output_idx, Value::BIGINT(static_cast<int64_t>(section.end_line)));
+		markdown_writer::WriteNumber(output.data[column_idx], output_idx, static_cast<int64_t>(section.end_line));
 		column_idx++;
 
 		// Provenance, trailing -- see the bind for why.
 		if (bind_data.options.include_filepath) {
-			output.data[column_idx].SetValue(output_idx, Value(file_path));
+			markdown_writer::WriteCheckedString(output.data[column_idx], output_idx, file_path);
 			column_idx++;
 		}
 
 		// Optional add-on extractor columns (extracted from this section's content)
 		if (bind_data.options.extract_wikilinks) {
-			output.data[column_idx].SetValue(output_idx, BuildWikilinksValue(section.content));
+			WriteWikilinks(output.data[column_idx], output_idx, section.content);
 			column_idx++;
 		}
 		if (bind_data.options.extract_tags) {
-			output.data[column_idx].SetValue(output_idx, BuildTagsValue(section.content));
+			WriteTags(output.data[column_idx], output_idx, section.content);
 			column_idx++;
 		}
 
@@ -732,55 +696,50 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 		idx_t column_idx = 0;
 
 		// kind ('block', or 'inline' for structured rich-text children)
-		output.data[column_idx].SetValue(output_idx, Value(block.kind));
+		markdown_writer::WriteString(output.data[column_idx], output_idx, block.kind);
 		column_idx++;
 
 		// element_type (was block_type)
-		output.data[column_idx].SetValue(output_idx, Value(block.block_type));
+		markdown_writer::WriteString(output.data[column_idx], output_idx, block.block_type);
 		column_idx++;
 
 		// content (NULL for containers whose text lives in structured inline children)
-		output.data[column_idx].SetValue(output_idx,
-		                                 block.content.empty() ? Value(LogicalType::VARCHAR) : Value(block.content));
+		markdown_writer::WriteOptionalString(output.data[column_idx], output_idx, block.content);
 		column_idx++;
 
 		// level (NULL if -1, meaning "not applicable")
-		output.data[column_idx].SetValue(output_idx, block.level >= 0 ? Value::INTEGER(block.level) : Value());
+		if (block.level >= 0) {
+			markdown_writer::WriteNumber(output.data[column_idx], output_idx, block.level);
+		} else {
+			markdown_writer::WriteNull(output.data[column_idx], output_idx);
+		}
 		column_idx++;
 
 		// encoding
-		output.data[column_idx].SetValue(output_idx, Value(block.encoding));
+		markdown_writer::WriteString(output.data[column_idx], output_idx, block.encoding);
 		column_idx++;
 
 		// attributes MAP
-		vector<Value> attr_keys;
-		vector<Value> attr_values;
-		for (const auto &attr : block.attributes) {
-			attr_keys.push_back(Value(attr.first));
-			attr_values.push_back(Value(attr.second));
-		}
-		Value attributes_map = Value::MAP(LogicalType(LogicalTypeId::VARCHAR), LogicalType(LogicalTypeId::VARCHAR),
-		                                  attr_keys, attr_values);
-		output.data[column_idx].SetValue(output_idx, attributes_map);
+		markdown_writer::WriteStringMap(output.data[column_idx], output_idx, block.attributes);
 		column_idx++;
 
 		// element_order (was block_order)
-		output.data[column_idx].SetValue(output_idx, Value::INTEGER(block.block_order));
+		markdown_writer::WriteNumber(output.data[column_idx], output_idx, block.block_order);
 		column_idx++;
 
 		// Provenance, trailing -- see the bind for why.
 		if (bind_data.options.include_filepath) {
-			output.data[column_idx].SetValue(output_idx, Value(file_path));
+			markdown_writer::WriteCheckedString(output.data[column_idx], output_idx, file_path);
 			column_idx++;
 		}
 
 		// Optional add-on extractor columns (extracted from this block's content)
 		if (bind_data.options.extract_wikilinks) {
-			output.data[column_idx].SetValue(output_idx, BuildWikilinksValue(block.content));
+			WriteWikilinks(output.data[column_idx], output_idx, block.content);
 			column_idx++;
 		}
 		if (bind_data.options.extract_tags) {
-			output.data[column_idx].SetValue(output_idx, BuildTagsValue(block.content));
+			WriteTags(output.data[column_idx], output_idx, block.content);
 			column_idx++;
 		}
 

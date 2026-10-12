@@ -1,0 +1,20 @@
+# name: test/sql/duck_block_attribute_errors.test
+# description: A duck_block attribute that must be a number fails the conversion instead of falling back to a default
+# group: [sql]
+
+require markdown
+
+statement error
+SELECT duck_block_to_md({kind: 'block', element_type: 'heading', content: 'H', level: NULL, encoding: 'text', attributes: MAP{'heading_level': 'abc'}, element_order: 0});
+----
+duck_block attribute heading_level is not an integer: 'abc'
+
+statement error
+SELECT duck_blocks_to_sections([{kind: 'block', element_type: 'heading', content: 'H', level: NULL, encoding: 'text', attributes: MAP{'heading_level': 'abc'}, element_order: 0}]);
+----
+duck_block attribute heading_level is not an integer: 'abc'
+
+statement error
+SELECT duck_block_to_md({kind: 'block', element_type: 'heading', content: 'H', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '2abc'}, element_order: 0});
+----
+duck_block attribute heading_level is not an integer: '2abc'

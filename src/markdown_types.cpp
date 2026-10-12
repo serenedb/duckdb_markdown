@@ -4,6 +4,8 @@
 #include "duck_block_functions.hpp"
 #include "duck_block_vocabulary.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
+#include "duckdb/common/error_data.hpp"
+#include "duckdb/common/operator/cast_operators.hpp"
 
 namespace duckdb {
 
@@ -52,7 +54,8 @@ static bool IsMarkdownType(const LogicalType &t) {
 //===--------------------------------------------------------------------===//
 
 static bool MarkdownToHTMLCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](string_t md_str) -> string_t {
+	bool success = true;
+	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](string_t md_str) -> optional<string_t> {
 		if (md_str.GetSize() == 0) {
 			return string_t();
 		}
@@ -61,15 +64,21 @@ static bool MarkdownToHTMLCast(Vector &source, Vector &result, idx_t count, Cast
 			const std::string html_str = markdown_utils::MarkdownToHTML(md_str.GetString());
 			return StringVector::AddString(result, html_str.c_str(), html_str.length());
 		} catch (const std::exception &e) {
-			return string_t();
+			if (success) {
+				HandleCastError::AssignError(
+				    StringUtil::Format("Error converting Markdown to HTML: %s", ErrorData(e).RawMessage()), parameters);
+				success = false;
+			}
+			return nullopt;
 		}
 	});
 
-	return true;
+	return success;
 }
 
 static bool MarkdownToTextCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](string_t md_str) -> string_t {
+	bool success = true;
+	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](string_t md_str) -> optional<string_t> {
 		if (md_str.GetSize() == 0) {
 			return string_t();
 		}
@@ -78,11 +87,16 @@ static bool MarkdownToTextCast(Vector &source, Vector &result, idx_t count, Cast
 			const std::string text_str = markdown_utils::MarkdownToText(md_str.GetString());
 			return StringVector::AddString(result, text_str.c_str(), text_str.length());
 		} catch (const std::exception &e) {
-			return StringVector::AddString(result, md_str); // Fallback to original
+			if (success) {
+				HandleCastError::AssignError(
+				    StringUtil::Format("Error converting Markdown to text: %s", ErrorData(e).RawMessage()), parameters);
+				success = false;
+			}
+			return nullopt;
 		}
 	});
 
-	return true;
+	return success;
 }
 
 static bool VarcharToMarkdownCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
