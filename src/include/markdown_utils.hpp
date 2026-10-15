@@ -78,9 +78,6 @@ std::string_view StripFrontmatter(std::string_view markdown_str);
 // Extractors that report line_number use this; md_stats deliberately does not.
 std::string StripFrontmatterKeepLines(const std::string &markdown_str);
 
-// Convert metadata to DuckDB MAP value
-Value MetadataToMap(const MarkdownMetadata &metadata);
-
 // Calculate document statistics.
 //
 // `exact` selects how the three *structural* counts -- heading_count,

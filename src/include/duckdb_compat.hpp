@@ -241,6 +241,35 @@ inline ValidityMask &CompatFlatValidityMutable(Vector &vec) {
 	return CompatFlatValidityMutableImpl<FV>(vec, CompatHasFlatValidityMutable<FV>());
 }
 
+template <class T, class = void>
+struct CompatHasListGetChildMutable : std::false_type {};
+template <class T>
+struct CompatHasListGetChildMutable<T, decltype(void(T::GetChildMutable(std::declval<Vector &>())))> : std::true_type {
+};
+
+template <class LV>
+inline Vector &CompatListChildMutableImpl(Vector &vec, std::true_type) {
+	return LV::GetChildMutable(vec);
+}
+template <class LV>
+inline Vector &CompatListChildMutableImpl(Vector &vec, std::false_type) {
+	return LV::GetEntry(vec);
+}
+template <class LV = ListVector>
+inline Vector &CompatListChildMutable(Vector &vec) {
+	return CompatListChildMutableImpl<LV>(vec, CompatHasListGetChildMutable<LV>());
+}
+
+inline Vector &CompatStructEntryImpl(Vector &entry) {
+	return entry;
+}
+inline Vector &CompatStructEntryImpl(unique_ptr<Vector> &entry) {
+	return *entry;
+}
+inline Vector &CompatStructEntry(Vector &vec, idx_t index) {
+	return CompatStructEntryImpl(StructVector::GetEntries(vec)[index]);
+}
+
 // ConstantExpression(const Value &) is DELETED on v2.0, which names its own
 // replacement in the deletion:
 //

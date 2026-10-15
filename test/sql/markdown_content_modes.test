@@ -97,6 +97,13 @@ LIMIT 1;
 ----
 api-reference	true
 
+# Test smart mode truncation at max length keeps multi-byte characters whole
+query II
+SELECT strlen(section.content), section.content = 'a' || repeat('€', 666)
+FROM (SELECT UNNEST(md_extract_sections(E'# Main\na' || repeat('€', 1000), 1, 6, 'smart')) as section);
+----
+1999	true
+
 # =============================================================================
 # Test: md_extract_section with include_subsections parameter
 # =============================================================================
