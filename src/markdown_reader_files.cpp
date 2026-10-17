@@ -6,6 +6,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/function/replacement_scan.hpp"
+#include "duckdb/main/error_manager.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -264,6 +265,9 @@ string MarkdownReader::ReadMarkdownFile(ClientContext &context, const string &fi
 	content.resize(file_size);
 
 	fs.Read(*file_handle, reinterpret_cast<void *>(content.data()), file_size);
+	if (!Value::StringIsValid(content.data(), content.size())) {
+		throw ErrorManager::InvalidUnicodeError(content, "markdown file");
+	}
 
 	// Normalize content if requested
 	if (options.normalize_content) {

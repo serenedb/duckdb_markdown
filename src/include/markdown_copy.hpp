@@ -137,7 +137,8 @@ private:
 	static string RenderTableSeparator(const WriteMarkdownBindData &bind_data);
 
 	//! Render a single data row for table mode
-	static string RenderTableRow(const DataChunk &chunk, idx_t row_idx, const WriteMarkdownBindData &bind_data);
+	static string RenderTableRow(const vector<UnifiedVectorFormat> &columns, idx_t row_idx,
+	                             const WriteMarkdownBindData &bind_data);
 
 	//! Escape a cell value for table mode
 	static string EscapeCellValue(const string &value, const WriteMarkdownBindData &bind_data);

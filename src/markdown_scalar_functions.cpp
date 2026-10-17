@@ -3,6 +3,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "markdown_types.hpp"
 #include "markdown_utils.hpp"
+#include "markdown_vector_writer.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 
@@ -156,25 +157,22 @@ void MarkdownFunctions::RegisterMarkdownTypeFunctions(ExtensionLoader &loader) {
 	auto markdown_type = MarkdownTypes::MarkdownType();
 
 	// value_to_md function (convert any value to Markdown)
-	ScalarFunction value_to_md_fun("value_to_md", {LogicalType::ANY}, markdown_type,
-	                               [](DataChunk &args, ExpressionState &state, Vector &result) {
-		                               auto &input = args.data[0];
-
-		                               for (idx_t row_idx = 0; row_idx < args.size(); row_idx++) {
-			                               Value value = input.GetValue(row_idx);
-
-			                               // Convert value to Markdown representation
-			                               std::string md_str;
-			                               if (value.IsNull()) {
-				                               md_str = "";
-			                               } else {
-				                               // Basic conversion - could be more sophisticated
-				                               md_str = value.ToString();
-			                               }
-
-			                               result.SetValue(row_idx, Value(md_str));
-		                               }
-	                               });
+	ScalarFunction value_to_md_fun(
+	    "value_to_md", {LogicalType::ANY}, markdown_type, [](DataChunk &args, ExpressionState &state, Vector &result) {
+		    const auto count = args.size();
+		    Vector text(LogicalType::VARCHAR, count);
+		    VectorOperations::DefaultCast(args.data[0], text, count);
+		    UnifiedVectorFormat texts;
+		    CompatToUnifiedFormat(text, count, texts);
+		    const auto data = UnifiedVectorFormat::GetData<string_t>(texts);
+		    result.SetVectorType(VectorType::FLAT_VECTOR);
+		    auto result_data = CompatFlatDataMutable<string_t>(result);
+		    for (idx_t row = 0; row < count; row++) {
+			    const auto idx = texts.sel->get_index(row);
+			    result_data[row] =
+			        texts.validity.RowIsValid(idx) ? StringVector::AddString(result, data[idx]) : string_t();
+		    }
+	    });
 
 	CreateScalarFunctionInfo info(std::move(value_to_md_fun));
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
@@ -189,62 +187,40 @@ void MarkdownFunctions::RegisterMarkdownTypeFunctions(ExtensionLoader &loader) {
 
 namespace {
 
-// The all-zero stats struct returned for empty input and for any input that
-// throws, shared by both md_stats overloads.
-Value EmptyStatsValue() {
-	child_list_t<Value> struct_values;
-	struct_values.push_back(std::make_pair("word_count", Value::BIGINT(0)));
-	struct_values.push_back(std::make_pair("char_count", Value::BIGINT(0)));
-	struct_values.push_back(std::make_pair("line_count", Value::BIGINT(0)));
-	struct_values.push_back(std::make_pair("heading_count", Value::BIGINT(0)));
-	struct_values.push_back(std::make_pair("code_block_count", Value::BIGINT(0)));
-	struct_values.push_back(std::make_pair("link_count", Value::BIGINT(0)));
-	struct_values.push_back(std::make_pair("reading_time_minutes", Value::DOUBLE(0.0)));
-	return Value::STRUCT(std::move(struct_values));
-}
-
-Value StatsValue(const markdown_utils::MarkdownStats &stats) {
-	child_list_t<Value> struct_values;
-	struct_values.push_back(std::make_pair("word_count", Value::BIGINT(stats.word_count)));
-	struct_values.push_back(std::make_pair("char_count", Value::BIGINT(stats.char_count)));
-	struct_values.push_back(std::make_pair("line_count", Value::BIGINT(stats.line_count)));
-	struct_values.push_back(std::make_pair("heading_count", Value::BIGINT(stats.heading_count)));
-	struct_values.push_back(std::make_pair("code_block_count", Value::BIGINT(stats.code_block_count)));
-	struct_values.push_back(std::make_pair("link_count", Value::BIGINT(stats.link_count)));
-	struct_values.push_back(std::make_pair("reading_time_minutes", Value::DOUBLE(stats.reading_time_minutes)));
-	return Value::STRUCT(std::move(struct_values));
-}
-
 // `has_exact_arg` says whether this is the two-argument overload. The flag is
 // read per row, so a non-constant expression works. Both overloads use DuckDB's
 // default null handling, so a NULL in either argument yields a NULL struct
 // without the function running at all; the IsNull guard below is belt and
 // braces for the paths that do not fold.
 void ExecuteStats(DataChunk &args, Vector &result, bool has_exact_arg) {
-	auto &markdown_vector = args.data[0];
-
-	for (idx_t row_idx = 0; row_idx < args.size(); row_idx++) {
+	const auto count = args.size();
+	UnifiedVectorFormat markdowns;
+	UnifiedVectorFormat exacts;
+	CompatToUnifiedFormat(args.data[0], count, markdowns);
+	if (has_exact_arg) {
+		CompatToUnifiedFormat(args.data[1], count, exacts);
+	}
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	for (idx_t row = 0; row < count; row++) {
 		try {
-			Value md_value = markdown_vector.GetValue(row_idx);
-
-			if (md_value.IsNull()) {
-				result.SetValue(row_idx, Value());
+			const auto idx = markdowns.sel->get_index(row);
+			if (!markdowns.validity.RowIsValid(idx)) {
+				FlatVector::SetNull(result, row, true);
 				continue;
 			}
 
 			bool exact = false;
 			if (has_exact_arg) {
-				Value exact_value = args.data[1].GetValue(row_idx);
-				exact = !exact_value.IsNull() && BooleanValue::Get(exact_value);
+				const auto exact_idx = exacts.sel->get_index(row);
+				exact = exacts.validity.RowIsValid(exact_idx) && UnifiedVectorFormat::GetData<bool>(exacts)[exact_idx];
 			}
 
-			string md_str = StringValue::Get(md_value);
-			if (md_str.empty()) {
-				result.SetValue(row_idx, EmptyStatsValue());
-				continue;
+			const auto md_str = UnifiedVectorFormat::GetData<string_t>(markdowns)[idx].GetString();
+			markdown_utils::MarkdownStats stats {};
+			if (!md_str.empty()) {
+				stats = markdown_utils::CalculateStats(md_str, exact);
 			}
-
-			result.SetValue(row_idx, StatsValue(markdown_utils::CalculateStats(md_str, exact)));
+			markdown_writer::WriteStats(result, row, stats);
 		} catch (const std::exception &e) {
 			ThrowMarkdownError("computing Markdown stats", e);
 		}
@@ -329,34 +305,38 @@ void MarkdownFunctions::RegisterStatsFunctions(ExtensionLoader &loader) {
 	ScalarFunction md_extract_section_with_subsections(
 	    "md_extract_section", {markdown_type, LogicalType::VARCHAR, LogicalType::BOOLEAN}, markdown_type,
 	    [](DataChunk &args, ExpressionState &state, Vector &result) {
-		    auto &markdown_vector = args.data[0];
-		    auto &section_id_vector = args.data[1];
-		    auto &include_subsections_vector = args.data[2];
+		    const auto count = args.size();
+		    UnifiedVectorFormat markdowns;
+		    UnifiedVectorFormat section_ids;
+		    UnifiedVectorFormat include_subsections;
+		    CompatToUnifiedFormat(args.data[0], count, markdowns);
+		    CompatToUnifiedFormat(args.data[1], count, section_ids);
+		    CompatToUnifiedFormat(args.data[2], count, include_subsections);
+		    result.SetVectorType(VectorType::FLAT_VECTOR);
 
-		    for (idx_t i = 0; i < args.size(); i++) {
-			    auto md_value = markdown_vector.GetValue(i);
-			    auto section_id_value = section_id_vector.GetValue(i);
-			    auto include_subsections_value = include_subsections_vector.GetValue(i);
-
-			    if (md_value.IsNull() || section_id_value.IsNull()) {
-				    result.SetValue(i, Value());
+		    for (idx_t row = 0; row < count; row++) {
+			    const auto markdown_idx = markdowns.sel->get_index(row);
+			    const auto section_idx = section_ids.sel->get_index(row);
+			    if (!markdowns.validity.RowIsValid(markdown_idx) || !section_ids.validity.RowIsValid(section_idx)) {
+				    markdown_writer::WriteNull(result, row);
 				    continue;
 			    }
 
-			    std::string markdown_str = md_value.ToString();
-			    std::string section_id_str = section_id_value.ToString();
-			    bool include_subsections =
-			        include_subsections_value.IsNull() ? false : include_subsections_value.GetValue<bool>();
+			    const auto markdown_str = UnifiedVectorFormat::GetData<string_t>(markdowns)[markdown_idx].GetString();
+			    const auto section_id_str =
+			        UnifiedVectorFormat::GetData<string_t>(section_ids)[section_idx].GetString();
+			    const auto include_idx = include_subsections.sel->get_index(row);
+			    const bool include = include_subsections.validity.RowIsValid(include_idx) &&
+			                         UnifiedVectorFormat::GetData<bool>(include_subsections)[include_idx];
 
 			    if (markdown_str.empty() || section_id_str.empty()) {
-				    result.SetValue(i, Value(""));
+				    markdown_writer::WriteString(result, row, std::string());
 				    continue;
 			    }
 
 			    try {
-				    const std::string section_content =
-				        markdown_utils::ExtractSection(markdown_str, section_id_str, include_subsections);
-				    result.SetValue(i, Value(section_content));
+				    markdown_writer::WriteString(result, row,
+				                                 markdown_utils::ExtractSection(markdown_str, section_id_str, include));
 			    } catch (const std::exception &e) {
 				    ThrowMarkdownError("extracting a Markdown section", e);
 			    }
@@ -425,27 +405,27 @@ void MarkdownFunctions::RegisterMetadataFunctions(ExtensionLoader &loader) {
 	auto map_type = LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR);
 	ScalarFunction md_extract_metadata_fun(
 	    "md_extract_metadata", {markdown_type}, map_type, [](DataChunk &args, ExpressionState &state, Vector &result) {
-		    auto &input = args.data[0];
-		    auto count = args.size();
+		    const auto count = args.size();
+		    UnifiedVectorFormat markdowns;
+		    CompatToUnifiedFormat(args.data[0], count, markdowns);
+		    result.SetVectorType(VectorType::FLAT_VECTOR);
+		    const std::map<std::string, std::string> no_fields;
 
-		    auto empty_map = Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR, vector<Value>(), vector<Value>());
-
-		    for (idx_t i = 0; i < count; i++) {
-			    auto md_value = input.GetValue(i);
-			    if (md_value.IsNull()) {
-				    result.SetValue(i, empty_map);
+		    for (idx_t row = 0; row < count; row++) {
+			    const auto idx = markdowns.sel->get_index(row);
+			    if (!markdowns.validity.RowIsValid(idx)) {
+				    markdown_writer::WriteStringMap(result, row, no_fields);
 				    continue;
 			    }
 
-			    auto md_str = md_value.ToString();
+			    const auto md_str = UnifiedVectorFormat::GetData<string_t>(markdowns)[idx].GetString();
 			    if (md_str.empty()) {
-				    result.SetValue(i, empty_map);
+				    markdown_writer::WriteStringMap(result, row, no_fields);
 				    continue;
 			    }
 
 			    try {
-				    auto metadata = markdown_utils::ExtractMetadata(md_str);
-				    result.SetValue(i, markdown_utils::MetadataToMap(metadata));
+				    markdown_writer::WriteStringMap(result, row, markdown_utils::ExtractMetadata(md_str).custom_fields);
 			    } catch (const std::exception &e) {
 				    ThrowMarkdownError("extracting Markdown metadata", e);
 			    }
@@ -467,33 +447,31 @@ void MarkdownFunctions::RegisterMetadataFunctions(ExtensionLoader &loader) {
 	// NULL when there is no frontmatter. This is the lightweight-markdown / real-YAML seam: pair it
 	// with duckdb_yaml (yaml(...) / read_yaml_frontmatter) when you need full YAML fidelity, without
 	// markdown itself carrying a YAML parser.
-	ScalarFunction md_extract_frontmatter_fun("md_extract_frontmatter", {markdown_type}, LogicalType::VARCHAR,
-	                                          [](DataChunk &args, ExpressionState &state, Vector &result) {
-		                                          auto &input = args.data[0];
-		                                          auto count = args.size();
+	ScalarFunction md_extract_frontmatter_fun(
+	    "md_extract_frontmatter", {markdown_type}, LogicalType::VARCHAR,
+	    [](DataChunk &args, ExpressionState &state, Vector &result) {
+		    const auto count = args.size();
+		    UnifiedVectorFormat markdowns;
+		    CompatToUnifiedFormat(args.data[0], count, markdowns);
+		    result.SetVectorType(VectorType::FLAT_VECTOR);
 
-		                                          for (idx_t i = 0; i < count; i++) {
-			                                          auto md_value = input.GetValue(i);
-			                                          if (md_value.IsNull()) {
-				                                          result.SetValue(i, Value(LogicalType::VARCHAR));
-				                                          continue;
-			                                          }
+		    for (idx_t row = 0; row < count; row++) {
+			    const auto idx = markdowns.sel->get_index(row);
+			    if (!markdowns.validity.RowIsValid(idx)) {
+				    markdown_writer::WriteNull(result, row);
+				    continue;
+			    }
 
-			                                          try {
-				                                          auto raw = markdown_utils::ExtractRawFrontmatter(
-				                                              md_value.ToString());
-				                                          if (raw.empty()) {
-					                                          // No frontmatter block (ExtractRawFrontmatter returns ""
-					                                          // when absent).
-					                                          result.SetValue(i, Value(LogicalType::VARCHAR));
-				                                          } else {
-					                                          result.SetValue(i, Value(raw));
-				                                          }
-			                                          } catch (const std::exception &e) {
-				                                          ThrowMarkdownError("extracting Markdown frontmatter", e);
-			                                          }
-		                                          }
-	                                          });
+			    try {
+				    markdown_writer::WriteOptionalString(
+				        result, row,
+				        markdown_utils::ExtractRawFrontmatter(
+				            UnifiedVectorFormat::GetData<string_t>(markdowns)[idx].GetString()));
+			    } catch (const std::exception &e) {
+				    ThrowMarkdownError("extracting Markdown frontmatter", e);
+			    }
+		    }
+	    });
 
 	md_extract_frontmatter_fun.SetFallible();
 	CreateScalarFunctionInfo frontmatter_info(std::move(md_extract_frontmatter_fun));

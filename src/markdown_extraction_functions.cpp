@@ -1,6 +1,7 @@
 #include "markdown_extraction_functions.hpp"
 #include "markdown_types.hpp"
 #include "markdown_utils.hpp"
+#include "markdown_vector_writer.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/common/exception.hpp"
@@ -17,30 +18,18 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 
 static void CodeBlockExtractionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &input_vector = args.data[0];
-	auto count = args.size();
-
-	for (idx_t i = 0; i < count; i++) {
-		auto markdown_str = input_vector.GetValue(i).ToString();
-		auto code_blocks = markdown_utils::ExtractCodeBlocks(markdown_str, ""); // No language filter
-
-		vector<Value> struct_values;
-		for (const auto &block : code_blocks) {
-			child_list_t<Value> struct_children;
-			struct_children.push_back({"language", Value(block.language)});
-			struct_children.push_back({"code", Value(block.code)});
-			struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(block.line_number))});
-			struct_children.push_back({"info_string", Value(block.info_string)});
-			struct_values.push_back(Value::STRUCT(struct_children));
-		}
-
-		if (struct_values.empty()) {
-			// For empty lists, we need to specify the type - use a simple empty list
-			result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
-		} else {
-			result.SetValue(i, Value::LIST(struct_values));
-		}
-	}
+	markdown_writer::ExecuteListExtraction(
+	    args, result,
+	    [](const std::string &markdown, idx_t) {
+		    return std::optional(markdown_utils::ExtractCodeBlocks(markdown, ""));
+	    },
+	    [](Vector &block, idx_t row, const markdown_utils::CodeBlock &code_block) {
+		    markdown_writer::WriteString(CompatStructEntry(block, 0), row, code_block.language);
+		    markdown_writer::WriteString(CompatStructEntry(block, 1), row, code_block.code);
+		    markdown_writer::WriteNumber(CompatStructEntry(block, 2), row,
+		                                 static_cast<int64_t>(code_block.line_number));
+		    markdown_writer::WriteString(CompatStructEntry(block, 3), row, code_block.info_string);
+	    });
 }
 
 //===--------------------------------------------------------------------===//
@@ -48,32 +37,16 @@ static void CodeBlockExtractionFunction(DataChunk &args, ExpressionState &state,
 //===--------------------------------------------------------------------===//
 
 static void LinkExtractionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &input_vector = args.data[0];
-
-	auto count = args.size();
-
-	for (idx_t i = 0; i < count; i++) {
-		auto markdown_str = input_vector.GetValue(i).ToString();
-		auto links = markdown_utils::ExtractLinks(markdown_str);
-
-		vector<Value> struct_values;
-		for (const auto &link : links) {
-			child_list_t<Value> struct_children;
-			struct_children.push_back({"text", Value(link.text)});
-			struct_children.push_back({"url", Value(link.url)});
-			struct_children.push_back({"title", link.title.empty() ? Value(LogicalType::VARCHAR) : Value(link.title)});
-			struct_children.push_back({"is_reference", Value(link.is_reference)});
-			struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(link.line_number))});
-			struct_values.push_back(Value::STRUCT(struct_children));
-		}
-
-		if (struct_values.empty()) {
-			// For empty lists, we need to specify the type - use a simple empty list
-			result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
-		} else {
-			result.SetValue(i, Value::LIST(struct_values));
-		}
-	}
+	markdown_writer::ExecuteListExtraction(
+	    args, result,
+	    [](const std::string &markdown, idx_t) { return std::optional(markdown_utils::ExtractLinks(markdown)); },
+	    [](Vector &entry, idx_t row, const markdown_utils::MarkdownLink &link) {
+		    markdown_writer::WriteString(CompatStructEntry(entry, 0), row, link.text);
+		    markdown_writer::WriteString(CompatStructEntry(entry, 1), row, link.url);
+		    markdown_writer::WriteOptionalString(CompatStructEntry(entry, 2), row, link.title);
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 3), row, link.is_reference);
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 4), row, static_cast<int64_t>(link.line_number));
+	    });
 }
 
 //===--------------------------------------------------------------------===//
@@ -81,32 +54,15 @@ static void LinkExtractionFunction(DataChunk &args, ExpressionState &state, Vect
 //===--------------------------------------------------------------------===//
 
 static void ImageExtractionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &input_vector = args.data[0];
-
-	auto count = args.size();
-
-	for (idx_t i = 0; i < count; i++) {
-		auto markdown_str = input_vector.GetValue(i).ToString();
-		auto images = markdown_utils::ExtractImages(markdown_str);
-
-		vector<Value> struct_values;
-		for (const auto &image : images) {
-			child_list_t<Value> struct_children;
-			struct_children.push_back({"alt_text", Value(image.alt_text)});
-			struct_children.push_back({"url", Value(image.url)});
-			struct_children.push_back(
-			    {"title", image.title.empty() ? Value(LogicalType::VARCHAR) : Value(image.title)});
-			struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(image.line_number))});
-			struct_values.push_back(Value::STRUCT(struct_children));
-		}
-
-		if (struct_values.empty()) {
-			// For empty lists, we need to specify the type - use a simple empty list
-			result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
-		} else {
-			result.SetValue(i, Value::LIST(struct_values));
-		}
-	}
+	markdown_writer::ExecuteListExtraction(
+	    args, result,
+	    [](const std::string &markdown, idx_t) { return std::optional(markdown_utils::ExtractImages(markdown)); },
+	    [](Vector &entry, idx_t row, const markdown_utils::MarkdownImage &image) {
+		    markdown_writer::WriteString(CompatStructEntry(entry, 0), row, image.alt_text);
+		    markdown_writer::WriteString(CompatStructEntry(entry, 1), row, image.url);
+		    markdown_writer::WriteOptionalString(CompatStructEntry(entry, 2), row, image.title);
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 3), row, static_cast<int64_t>(image.line_number));
+	    });
 }
 
 //===--------------------------------------------------------------------===//
@@ -114,31 +70,10 @@ static void ImageExtractionFunction(DataChunk &args, ExpressionState &state, Vec
 //===--------------------------------------------------------------------===//
 
 static void WikilinkExtractionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &input_vector = args.data[0];
-
-	auto count = args.size();
-
-	for (idx_t i = 0; i < count; i++) {
-		auto markdown_str = input_vector.GetValue(i).ToString();
-		auto wikilinks = markdown_utils::ExtractWikilinks(markdown_str);
-
-		vector<Value> struct_values;
-		for (const auto &wl : wikilinks) {
-			child_list_t<Value> struct_children;
-			struct_children.push_back({"target", Value(wl.target)});
-			struct_children.push_back({"alias", wl.alias.empty() ? Value(LogicalType::VARCHAR) : Value(wl.alias)});
-			struct_children.push_back({"anchor", wl.anchor.empty() ? Value(LogicalType::VARCHAR) : Value(wl.anchor)});
-			struct_children.push_back({"is_embed", Value(wl.is_embed)});
-			struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(wl.line_number))});
-			struct_values.push_back(Value::STRUCT(struct_children));
-		}
-
-		if (struct_values.empty()) {
-			result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
-		} else {
-			result.SetValue(i, Value::LIST(struct_values));
-		}
-	}
+	markdown_writer::ExecuteListExtraction(
+	    args, result,
+	    [](const std::string &markdown, idx_t) { return std::optional(markdown_utils::ExtractWikilinks(markdown)); },
+	    markdown_writer::WriteWikilink);
 }
 
 //===--------------------------------------------------------------------===//
@@ -146,205 +81,132 @@ static void WikilinkExtractionFunction(DataChunk &args, ExpressionState &state, 
 //===--------------------------------------------------------------------===//
 
 static void TagExtractionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &input_vector = args.data[0];
-
-	auto count = args.size();
-
-	for (idx_t i = 0; i < count; i++) {
-		auto markdown_str = input_vector.GetValue(i).ToString();
-		auto md_tags = markdown_utils::ExtractTags(markdown_str);
-
-		vector<Value> struct_values;
-		for (const auto &t : md_tags) {
-			child_list_t<Value> struct_children;
-			struct_children.push_back({"tag", Value(t.tag)});
-			struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(t.line_number))});
-			struct_values.push_back(Value::STRUCT(struct_children));
-		}
-
-		if (struct_values.empty()) {
-			result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
-		} else {
-			result.SetValue(i, Value::LIST(struct_values));
-		}
-	}
+	markdown_writer::ExecuteListExtraction(
+	    args, result,
+	    [](const std::string &markdown, idx_t) { return std::optional(markdown_utils::ExtractTags(markdown)); },
+	    markdown_writer::WriteTag);
 }
 
 //===--------------------------------------------------------------------===//
 // Table Row Extraction - Scalar Function (renamed from md_extract_tables)
 //===--------------------------------------------------------------------===//
 
+struct TableCell {
+	idx_t table_index;
+	bool header;
+	idx_t row_index;
+	idx_t column_index;
+	const std::string *value;
+	const markdown_utils::MarkdownTable *table;
+};
+
 static void TableRowExtractionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &input_vector = args.data[0];
-
-	auto count = args.size();
-
-	for (idx_t i = 0; i < count; i++) {
-		auto markdown_str = input_vector.GetValue(i).ToString();
-		auto tables = markdown_utils::ExtractTables(markdown_str);
-
-		vector<Value> struct_values;
-
-		// Process each table
-		for (size_t table_idx = 0; table_idx < tables.size(); table_idx++) {
-			const auto &table = tables[table_idx];
-
-			// Output header cells
-			for (size_t col_idx = 0; col_idx < table.headers.size(); col_idx++) {
-				child_list_t<Value> struct_children;
-				struct_children.push_back({"table_index", Value::BIGINT(static_cast<int64_t>(table_idx))});
-				struct_children.push_back({"row_type", Value("header")});
-				struct_children.push_back({"row_index", Value::BIGINT(0)});
-				struct_children.push_back({"column_index", Value::BIGINT(static_cast<int64_t>(col_idx))});
-				struct_children.push_back({"cell_value", Value(table.headers[col_idx])});
-				struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(table.line_number))});
-				struct_children.push_back({"num_columns", Value::BIGINT(static_cast<int64_t>(table.num_columns))});
-				struct_children.push_back({"num_rows", Value::BIGINT(static_cast<int64_t>(table.num_rows))});
-				struct_values.push_back(Value::STRUCT(struct_children));
-			}
-
-			// Output data rows
-			for (size_t row_idx = 0; row_idx < table.rows.size(); row_idx++) {
-				const auto &row = table.rows[row_idx];
-				for (size_t col_idx = 0; col_idx < row.size(); col_idx++) {
-					child_list_t<Value> struct_children;
-					struct_children.push_back({"table_index", Value::BIGINT(static_cast<int64_t>(table_idx))});
-					struct_children.push_back({"row_type", Value("data")});
-					struct_children.push_back({"row_index", Value::BIGINT(static_cast<int64_t>(row_idx + 1))});
-					struct_children.push_back({"column_index", Value::BIGINT(static_cast<int64_t>(col_idx))});
-					struct_children.push_back({"cell_value", Value(row[col_idx])});
-					struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(table.line_number))});
-					struct_children.push_back({"num_columns", Value::BIGINT(static_cast<int64_t>(table.num_columns))});
-					struct_children.push_back({"num_rows", Value::BIGINT(static_cast<int64_t>(table.num_rows))});
-					struct_values.push_back(Value::STRUCT(struct_children));
-				}
-			}
-		}
-
-		if (struct_values.empty()) {
-			// For empty lists, we need to specify the type - use a simple empty list
-			result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
-		} else {
-			result.SetValue(i, Value::LIST(struct_values));
-		}
-	}
+	vector<markdown_utils::MarkdownTable> tables;
+	markdown_writer::ExecuteListExtraction(
+	    args, result,
+	    [&](const std::string &markdown, idx_t) {
+		    tables = markdown_utils::ExtractTables(markdown);
+		    vector<TableCell> cells;
+		    for (idx_t table_idx = 0; table_idx < tables.size(); table_idx++) {
+			    const auto &table = tables[table_idx];
+			    for (idx_t col_idx = 0; col_idx < table.headers.size(); col_idx++) {
+				    cells.push_back({table_idx, true, 0, col_idx, &table.headers[col_idx], &table});
+			    }
+			    for (idx_t row_idx = 0; row_idx < table.rows.size(); row_idx++) {
+				    const auto &row = table.rows[row_idx];
+				    for (idx_t col_idx = 0; col_idx < row.size(); col_idx++) {
+					    cells.push_back({table_idx, false, row_idx + 1, col_idx, &row[col_idx], &table});
+				    }
+			    }
+		    }
+		    return std::optional(std::move(cells));
+	    },
+	    [](Vector &entry, idx_t row, const TableCell &cell) {
+		    static const std::string header_type = "header";
+		    static const std::string data_type = "data";
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 0), row, static_cast<int64_t>(cell.table_index));
+		    markdown_writer::WriteString(CompatStructEntry(entry, 1), row, cell.header ? header_type : data_type);
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 2), row, static_cast<int64_t>(cell.row_index));
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 3), row, static_cast<int64_t>(cell.column_index));
+		    markdown_writer::WriteString(CompatStructEntry(entry, 4), row, *cell.value);
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 5), row,
+		                                 static_cast<int64_t>(cell.table->line_number));
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 6), row,
+		                                 static_cast<int64_t>(cell.table->num_columns));
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 7), row, static_cast<int64_t>(cell.table->num_rows));
+	    });
 }
 
 //===--------------------------------------------------------------------===//
 // Section Extraction - Scalar Function
 //===--------------------------------------------------------------------===//
 
+static void WriteSection(Vector &entry, idx_t row, const markdown_utils::MarkdownSection &section) {
+	markdown_writer::WriteString(CompatStructEntry(entry, 0), row, section.id);
+	markdown_writer::WriteString(CompatStructEntry(entry, 1), row, section.section_path);
+	markdown_writer::WriteNumber(CompatStructEntry(entry, 2), row, static_cast<int32_t>(section.level));
+	markdown_writer::WriteString(CompatStructEntry(entry, 3), row, section.title);
+	markdown_writer::WriteString(CompatStructEntry(entry, 4), row, section.content);
+	markdown_writer::WriteOptionalString(CompatStructEntry(entry, 5), row, section.parent_id);
+	markdown_writer::WriteNumber(CompatStructEntry(entry, 6), row, static_cast<int64_t>(section.start_line));
+	markdown_writer::WriteNumber(CompatStructEntry(entry, 7), row, static_cast<int64_t>(section.end_line));
+}
+
 static void SectionExtractionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &input_vector = args.data[0];
-	auto count = args.size();
-
-	for (idx_t i = 0; i < count; i++) {
-		auto markdown_str = input_vector.GetValue(i).ToString();
-		auto sections = markdown_utils::ExtractSections(markdown_str, 1, 6, true); // Extract all sections with content
-
-		vector<Value> struct_values;
-		for (const auto &section : sections) {
-			child_list_t<Value> struct_children;
-			struct_children.push_back({"section_id", Value(section.id)});
-			struct_children.push_back({"section_path", Value(section.section_path)});
-			struct_children.push_back({"level", Value::INTEGER(section.level)});
-			struct_children.push_back({"title", Value(section.title)});
-			struct_children.push_back({"content", Value(section.content)});
-			struct_children.push_back(
-			    {"parent_id", section.parent_id.empty() ? Value(LogicalType::VARCHAR) : Value(section.parent_id)});
-			struct_children.push_back({"start_line", Value::BIGINT(static_cast<int64_t>(section.start_line))});
-			struct_children.push_back({"end_line", Value::BIGINT(static_cast<int64_t>(section.end_line))});
-			struct_values.push_back(Value::STRUCT(struct_children));
-		}
-
-		if (struct_values.empty()) {
-			// For empty lists, we need to specify the type - use a simple empty list
-			result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
-		} else {
-			result.SetValue(i, Value::LIST(struct_values));
-		}
-	}
+	markdown_writer::ExecuteListExtraction(
+	    args, result,
+	    [](const std::string &markdown, idx_t) {
+		    return std::optional(markdown_utils::ExtractSections(markdown, 1, 6, true));
+	    },
+	    WriteSection);
 }
 
 static void SectionExtractionFunctionWithLevels(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &input_vector = args.data[0];
-	auto &min_level_vector = args.data[1];
-	auto &max_level_vector = args.data[2];
-	auto count = args.size();
-
-	for (idx_t i = 0; i < count; i++) {
-		auto markdown_str = input_vector.GetValue(i).ToString();
-		auto min_level = static_cast<int32_t>(min_level_vector.GetValue(i).GetValue<int32_t>());
-		auto max_level = static_cast<int32_t>(max_level_vector.GetValue(i).GetValue<int32_t>());
-		auto sections = markdown_utils::ExtractSections(markdown_str, min_level, max_level, true);
-
-		vector<Value> struct_values;
-		for (const auto &section : sections) {
-			child_list_t<Value> struct_children;
-			struct_children.push_back({"section_id", Value(section.id)});
-			struct_children.push_back({"section_path", Value(section.section_path)});
-			struct_children.push_back({"level", Value::INTEGER(section.level)});
-			struct_children.push_back({"title", Value(section.title)});
-			struct_children.push_back({"content", Value(section.content)});
-			struct_children.push_back(
-			    {"parent_id", section.parent_id.empty() ? Value(LogicalType::VARCHAR) : Value(section.parent_id)});
-			struct_children.push_back({"start_line", Value::BIGINT(static_cast<int64_t>(section.start_line))});
-			struct_children.push_back({"end_line", Value::BIGINT(static_cast<int64_t>(section.end_line))});
-			struct_values.push_back(Value::STRUCT(struct_children));
-		}
-
-		if (struct_values.empty()) {
-			// For empty lists, we need to specify the type - use a simple empty list
-			result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
-		} else {
-			result.SetValue(i, Value::LIST(struct_values));
-		}
-	}
+	const auto count = args.size();
+	UnifiedVectorFormat min_levels;
+	UnifiedVectorFormat max_levels;
+	CompatToUnifiedFormat(args.data[1], count, min_levels);
+	CompatToUnifiedFormat(args.data[2], count, max_levels);
+	markdown_writer::ExecuteListExtraction(
+	    args, result,
+	    [&](const std::string &markdown, idx_t row) -> std::optional<vector<markdown_utils::MarkdownSection>> {
+		    const auto min_idx = min_levels.sel->get_index(row);
+		    const auto max_idx = max_levels.sel->get_index(row);
+		    if (!min_levels.validity.RowIsValid(min_idx) || !max_levels.validity.RowIsValid(max_idx)) {
+			    return std::nullopt;
+		    }
+		    return markdown_utils::ExtractSections(markdown, UnifiedVectorFormat::GetData<int32_t>(min_levels)[min_idx],
+		                                           UnifiedVectorFormat::GetData<int32_t>(max_levels)[max_idx], true);
+	    },
+	    WriteSection);
 }
 
-// Version with content_mode parameter
 static void SectionExtractionFunctionWithContentMode(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &input_vector = args.data[0];
-	auto &min_level_vector = args.data[1];
-	auto &max_level_vector = args.data[2];
-	auto &content_mode_vector = args.data[3];
-	auto count = args.size();
-
-	for (idx_t i = 0; i < count; i++) {
-		auto markdown_str = input_vector.GetValue(i).ToString();
-		auto min_level = static_cast<int32_t>(min_level_vector.GetValue(i).GetValue<int32_t>());
-		auto max_level = static_cast<int32_t>(max_level_vector.GetValue(i).GetValue<int32_t>());
-
-		std::string content_mode = "minimal";
-		auto mode_value = content_mode_vector.GetValue(i);
-		if (!mode_value.IsNull()) {
-			content_mode = mode_value.ToString();
-		}
-
-		auto sections = markdown_utils::ExtractSections(markdown_str, min_level, max_level, true, content_mode);
-
-		vector<Value> struct_values;
-		for (const auto &section : sections) {
-			child_list_t<Value> struct_children;
-			struct_children.push_back({"section_id", Value(section.id)});
-			struct_children.push_back({"section_path", Value(section.section_path)});
-			struct_children.push_back({"level", Value::INTEGER(section.level)});
-			struct_children.push_back({"title", Value(section.title)});
-			struct_children.push_back({"content", Value(section.content)});
-			struct_children.push_back(
-			    {"parent_id", section.parent_id.empty() ? Value(LogicalType::VARCHAR) : Value(section.parent_id)});
-			struct_children.push_back({"start_line", Value::BIGINT(static_cast<int64_t>(section.start_line))});
-			struct_children.push_back({"end_line", Value::BIGINT(static_cast<int64_t>(section.end_line))});
-			struct_values.push_back(Value::STRUCT(struct_children));
-		}
-
-		if (struct_values.empty()) {
-			// For empty lists, we need to specify the type - use a simple empty list
-			result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
-		} else {
-			result.SetValue(i, Value::LIST(struct_values));
-		}
-	}
+	const auto count = args.size();
+	UnifiedVectorFormat min_levels;
+	UnifiedVectorFormat max_levels;
+	UnifiedVectorFormat content_modes;
+	CompatToUnifiedFormat(args.data[1], count, min_levels);
+	CompatToUnifiedFormat(args.data[2], count, max_levels);
+	CompatToUnifiedFormat(args.data[3], count, content_modes);
+	markdown_writer::ExecuteListExtraction(
+	    args, result,
+	    [&](const std::string &markdown, idx_t row) -> std::optional<vector<markdown_utils::MarkdownSection>> {
+		    const auto min_idx = min_levels.sel->get_index(row);
+		    const auto max_idx = max_levels.sel->get_index(row);
+		    if (!min_levels.validity.RowIsValid(min_idx) || !max_levels.validity.RowIsValid(max_idx)) {
+			    return std::nullopt;
+		    }
+		    std::string content_mode = "minimal";
+		    const auto mode_idx = content_modes.sel->get_index(row);
+		    if (content_modes.validity.RowIsValid(mode_idx)) {
+			    content_mode = UnifiedVectorFormat::GetData<string_t>(content_modes)[mode_idx].GetString();
+		    }
+		    return markdown_utils::ExtractSections(markdown, UnifiedVectorFormat::GetData<int32_t>(min_levels)[min_idx],
+		                                           UnifiedVectorFormat::GetData<int32_t>(max_levels)[max_idx], true,
+		                                           content_mode);
+	    },
+	    WriteSection);
 }
 
 //===--------------------------------------------------------------------===//
@@ -352,69 +214,31 @@ static void SectionExtractionFunctionWithContentMode(DataChunk &args, Expression
 //===--------------------------------------------------------------------===//
 
 static void TableJSONExtractionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &input_vector = args.data[0];
-
-	auto count = args.size();
-
-	for (idx_t i = 0; i < count; i++) {
-		auto markdown_str = input_vector.GetValue(i).ToString();
-		auto tables = markdown_utils::ExtractTables(markdown_str);
-
-		vector<Value> struct_values;
-
-		// Process each table
-		for (size_t table_idx = 0; table_idx < tables.size(); table_idx++) {
-			const auto &table = tables[table_idx];
-			const auto &headers = table.headers;
-			const auto &rows = table.rows;
-
-			// Create header values. Always use the (child_type, values) overload:
-			// the single-argument Value::LIST infers the child type from the
-			// elements and throws an INTERNAL error on an empty vector. A table
-			// with a header but no data rows, or a row with no cells, is a
-			// perfectly ordinary document and must not abort the query (#21).
-			vector<Value> header_values;
-			for (const auto &header : headers) {
-				header_values.push_back(Value(header));
-			}
-
-			// Create data rows as list of lists
-			vector<Value> row_values;
-			for (const auto &row : rows) {
-				vector<Value> cell_values;
-				for (const auto &cell : row) {
-					cell_values.push_back(Value(cell));
-				}
-				row_values.push_back(Value::LIST(LogicalType::VARCHAR, std::move(cell_values)));
-			}
-
-			// Create struct for this table
-			child_list_t<Value> table_struct_children;
-			table_struct_children.push_back({"table_index", Value::BIGINT(static_cast<int64_t>(table_idx))});
-			table_struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(table.line_number))});
-			table_struct_children.push_back({"num_columns", Value::BIGINT(static_cast<int64_t>(headers.size()))});
-			table_struct_children.push_back({"num_rows", Value::BIGINT(static_cast<int64_t>(rows.size()))});
-			table_struct_children.push_back({"headers", Value::LIST(LogicalType::VARCHAR, std::move(header_values))});
-			table_struct_children.push_back(
-			    {"table_data", Value::LIST(LogicalType::LIST(LogicalType::VARCHAR), std::move(row_values))});
-
-			struct_values.push_back(Value::STRUCT(table_struct_children));
-		}
-
-		if (struct_values.empty()) {
-			// For empty lists, use the correct struct type
-			auto empty_list_type = LogicalType::LIST(LogicalType::STRUCT(
-			    {{"table_index", LogicalType(LogicalTypeId::BIGINT)},
-			     {"line_number", LogicalType(LogicalTypeId::BIGINT)},
-			     {"num_columns", LogicalType(LogicalTypeId::BIGINT)},
-			     {"num_rows", LogicalType(LogicalTypeId::BIGINT)},
-			     {"headers", LogicalType::LIST(LogicalType(LogicalTypeId::VARCHAR))},
-			     {"table_data", LogicalType::LIST(LogicalType::LIST(LogicalType(LogicalTypeId::VARCHAR)))}}));
-			result.SetValue(i, Value::LIST(empty_list_type, {}));
-		} else {
-			result.SetValue(i, Value::LIST(struct_values));
-		}
-	}
+	vector<markdown_utils::MarkdownTable> tables;
+	markdown_writer::ExecuteListExtraction(
+	    args, result,
+	    [&](const std::string &markdown, idx_t) {
+		    tables = markdown_utils::ExtractTables(markdown);
+		    vector<idx_t> indexes(tables.size());
+		    for (idx_t table_idx = 0; table_idx < tables.size(); table_idx++) {
+			    indexes[table_idx] = table_idx;
+		    }
+		    return std::optional(std::move(indexes));
+	    },
+	    [&](Vector &entry, idx_t row, idx_t table_idx) {
+		    const auto &table = tables[table_idx];
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 0), row, static_cast<int64_t>(table_idx));
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 1), row, static_cast<int64_t>(table.line_number));
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 2), row, static_cast<int64_t>(table.headers.size()));
+		    markdown_writer::WriteNumber(CompatStructEntry(entry, 3), row, static_cast<int64_t>(table.rows.size()));
+		    markdown_writer::WriteStringList(CompatStructEntry(entry, 4), row, table.headers);
+		    auto &table_data = CompatStructEntry(entry, 5);
+		    const auto offset = markdown_writer::WriteList(table_data, row, table.rows.size());
+		    auto &cells = CompatListChildMutable(table_data);
+		    for (idx_t row_idx = 0; row_idx < table.rows.size(); row_idx++) {
+			    markdown_writer::WriteStringList(cells, offset + row_idx, table.rows[row_idx]);
+		    }
+	    });
 }
 
 //===--------------------------------------------------------------------===//

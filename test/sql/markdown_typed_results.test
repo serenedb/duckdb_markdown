@@ -1,0 +1,70 @@
+# name: test/sql/markdown_typed_results.test
+# description: Extraction, stats and metadata results over columns with NULL rows and many rows
+# group: [sql]
+
+require markdown
+
+statement ok
+CREATE TABLE docs AS SELECT * FROM (VALUES
+	(1, E'# Title\n[a](http://a "T") ![i](x.png)\n```sql\nSELECT 1;\n```\n[[Page#Head|alias]] #tag\n\n| h1 | h2 |\n|---|---|\n| c1 | c2 |'),
+	(2, NULL),
+	(3, ''),
+	(4, E'---\ntitle: Doc\nauthor: Me\n---\n## Sub\ntext')
+) t(id, md);
+
+query IIIIIII
+SELECT id, replace(md_extract_code_blocks(md)::VARCHAR, chr(10), ' '), md_extract_links(md), md_extract_images(md),
+       md_extract_wikilinks(md), md_extract_tags(md), md_extract_tables_json(md)
+FROM docs ORDER BY id
+----
+1	[{'language': sql, 'code': 'SELECT 1; ', 'line_number': 3, 'info_string': sql}]	[{'text': a, 'url': 'http://a', 'title': T, 'is_reference': false, 'line_number': 2}]	[{'alt_text': i, 'url': x.png, 'title': NULL, 'line_number': 2}]	[{'target': Page, 'alias': alias, 'anchor': #Head, 'is_embed': false, 'line_number': 6}]	[{'tag': tag, 'line_number': 6}]	[{'table_index': 0, 'line_number': 8, 'num_columns': 2, 'num_rows': 1, 'headers': [h1, h2], 'table_data': [[c1, c2]]}]
+2	NULL	NULL	NULL	NULL	NULL	NULL
+3	[]	[]	[]	[]	[]	[]
+4	[]	[]	[]	[]	[]	[]
+
+query II
+SELECT id, md_extract_table_rows(md) FROM docs ORDER BY id
+----
+1	[{'table_index': 0, 'row_type': header, 'row_index': 0, 'column_index': 0, 'cell_value': h1, 'line_number': 8, 'num_columns': 2, 'num_rows': 1}, {'table_index': 0, 'row_type': header, 'row_index': 0, 'column_index': 1, 'cell_value': h2, 'line_number': 8, 'num_columns': 2, 'num_rows': 1}, {'table_index': 0, 'row_type': data, 'row_index': 1, 'column_index': 0, 'cell_value': c1, 'line_number': 8, 'num_columns': 2, 'num_rows': 1}, {'table_index': 0, 'row_type': data, 'row_index': 1, 'column_index': 1, 'cell_value': c2, 'line_number': 8, 'num_columns': 2, 'num_rows': 1}]
+2	NULL
+3	[]
+4	[]
+
+query III
+SELECT id, md_stats(md), md_extract_metadata(md) FROM docs ORDER BY id
+----
+1	{'word_count': 22, 'char_count': 118, 'line_count': 10, 'heading_count': 1, 'code_block_count': 1, 'link_count': 2, 'reading_time_minutes': 0.11}	{}
+2	NULL	{}
+3	{'word_count': 0, 'char_count': 0, 'line_count': 0, 'heading_count': 0, 'code_block_count': 0, 'link_count': 0, 'reading_time_minutes': 0}	{}
+4	{'word_count': 3, 'char_count': 11, 'line_count': 2, 'heading_count': 1, 'code_block_count': 0, 'link_count': 0, 'reading_time_minutes': 0.015}	{author=Me, title=Doc}
+
+query II
+SELECT id, replace(md_extract_frontmatter(md), chr(10), ' ') FROM docs ORDER BY id
+----
+1	NULL
+2	NULL
+3	NULL
+4	title: Doc author: Me
+
+query I
+SELECT replace(md_extract_sections(md, 1, 6, 'full')::VARCHAR, chr(10), ' ') FROM docs WHERE id = 4
+----
+[{'section_id': sub, 'section_path': sub, 'level': 2, 'title': Sub, 'content': 'text ', 'parent_id': NULL, 'start_line': 1, 'end_line': 2}]
+
+query I
+SELECT md_extract_sections(md, NULL::INTEGER, 6) FROM docs WHERE id = 4
+----
+NULL
+
+query II
+SELECT sum(len(md_extract_code_blocks(d))), sum(len(md_extract_links(d)))
+FROM (SELECT E'[x](http://y/' || i || E')\n```\n' || i || E'\n```' AS d FROM range(5000) t(i))
+----
+5000	5000
+
+query I
+SELECT value_to_md(v) FROM (VALUES (42), (NULL), (7)) t(v)
+----
+42
+(empty)
+7
