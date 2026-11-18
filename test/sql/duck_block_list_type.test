@@ -86,3 +86,12 @@ SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]'
      NOT LIKE '1.%';
 ----
 true
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0},
+                          {kind: 'block', element_type: 'paragraph', content: 'stray', level: 3, encoding: 'text', attributes: MAP{}, element_order: 1},
+                          {kind: 'block', element_type: 'list_item', content: 'Term', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 2},
+                          {kind: 'block', element_type: 'list_item', content: 'Def', level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 3}])
+     = E'stray\n\nTerm\n:   Def\n\n';
+----
+true
