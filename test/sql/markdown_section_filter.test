@@ -1,5 +1,5 @@
 # name: test/sql/markdown_section_filter.test
-# description: section_filter keeps the named section and its subsections, not other sections whose path is as long as the filter
+# description: section_filter keeps the named section and its subsections, not other sections whose path is as long as the filter; a filter may name a path suffix, and a list's first fragment filters every file of the list
 # group: [sql]
 
 require markdown
@@ -36,3 +36,24 @@ query I
 SELECT count(*) FROM read_markdown_sections('{TEST_DIR}/section_filter.md', section_filter := 'missing');
 ----
 0
+
+query T
+SELECT section_id FROM read_markdown_sections('test/markdown/sections_test.md', section_filter := 'classes/datamanager') ORDER BY start_line;
+----
+datamanager
+initialize-config
+shutdown
+
+query T
+SELECT section_id FROM read_markdown_sections('test/markdown/sections_test.md#classes/datamanager') ORDER BY start_line;
+----
+datamanager
+initialize-config
+shutdown
+
+query T
+SELECT section_id FROM read_markdown_sections(['test/markdown/sections_test.md#datamanager', 'test/markdown/simple.md']) ORDER BY section_id;
+----
+datamanager
+initialize-config
+shutdown
