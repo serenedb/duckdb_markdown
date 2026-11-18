@@ -623,6 +623,9 @@ static unique_ptr<FunctionData> MarkdownBind(ClientContext &context, TableFuncti
 	ParseMarkdownOptions(named_parameters, options);
 
 	Value paths = input.inputs[0];
+	if (paths.type().id() == LogicalTypeId::VARIANT) {
+		paths = VariantValue::GetValue(paths);
+	}
 	if (KIND == MarkdownReadKind::SECTIONS) {
 		string fragment;
 		if (paths.type().id() == LogicalTypeId::VARCHAR) {
