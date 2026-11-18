@@ -77,7 +77,7 @@ SELECT count(*) FROM read_markdown('test/markdown/simple.md', content_as_varchar
 ----
 1
 
-# ---- read_markdown_sections: 16 declared ----
+# ---- read_markdown_sections: 17 declared ----
 query I
 SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', extract_metadata := true);
 ----
@@ -157,6 +157,11 @@ query I
 SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', max_content_length := 1000000);
 ----
 true
+
+query II
+SELECT section_id, title FROM read_markdown_sections('test/markdown/simple.md', section_filter := 'features');
+----
+features	Features
 
 # ---- read_markdown_blocks: 6 declared ----
 query I
