@@ -6,25 +6,16 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "fast_float/fast_float.h"
-#include "yyjson.hpp"
+#include "duckdb/common/json_document.hpp"
 #include "duck_block_vocabulary.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include <sstream>
 
 namespace duckdb {
 
-using namespace duckdb_yyjson;
-
-struct YyjsonDocFree {
-	void operator()(yyjson_doc *doc) const {
-		yyjson_doc_free(doc);
-	}
-};
-
-using YyjsonDoc = unique_ptr<yyjson_doc, YyjsonDocFree>;
-
-static YyjsonDoc ReadJson(const string &content) {
-	return YyjsonDoc(yyjson_read(content.c_str(), content.size(), 0));
+static const JSONNode *ReadJson(JSONTreeParser &parser, const string &content) {
+	JSONParseError error;
+	return parser.Parse(content.c_str(), content.size(), error);
 }
 
 // Claims in this file about ANOTHER repository's behaviour carry a date and,
@@ -87,61 +78,52 @@ string DuckBlockFunctions::GetAttribute(const Value &attributes, const string &k
 	return "";
 }
 
-vector<string> DuckBlockFunctions::ParseJsonListItems(const string &content) {
+vector<string> DuckBlockFunctions::ParseJsonListItems(JSONTreeParser &parser, const string &content) {
 	vector<string> items;
 	if (content.empty()) {
 		return items;
 	}
-	auto doc = ReadJson(content);
-	if (!doc) {
+	auto root = ReadJson(parser, content);
+	if (!root) {
 		return items;
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc.get());
-	if (yyjson_is_arr(root)) {
-		size_t idx, max;
-		yyjson_val *val;
-		yyjson_arr_foreach(root, idx, max, val) {
-			if (yyjson_is_str(val)) {
-				items.emplace_back(yyjson_get_str(val), yyjson_get_len(val));
+	if (root->type == JSONValueType::ARRAY) {
+		for (auto &val : root->Elements()) {
+			if (val.type == JSONValueType::STRING) {
+				items.emplace_back(val.GetString());
 			}
 		}
 	}
 	return items;
 }
 
-void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &headers, vector<vector<string>> &rows) {
+void DuckBlockFunctions::ParseJsonTable(JSONTreeParser &parser, const string &content, vector<string> &headers,
+                                        vector<vector<string>> &rows) {
 	if (content.empty()) {
 		return;
 	}
-	auto doc = ReadJson(content);
-	if (!doc) {
+	auto root = ReadJson(parser, content);
+	if (!root) {
 		return;
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc.get());
-	if (yyjson_is_obj(root)) {
-		yyjson_val *headers_val = yyjson_obj_get(root, "headers");
-		if (headers_val && yyjson_is_arr(headers_val)) {
-			size_t idx, max;
-			yyjson_val *val;
-			yyjson_arr_foreach(headers_val, idx, max, val) {
-				if (yyjson_is_str(val)) {
-					headers.emplace_back(yyjson_get_str(val), yyjson_get_len(val));
+	if (root->type == JSONValueType::OBJECT) {
+		auto headers_val = root->Get("headers");
+		if (headers_val && headers_val->type == JSONValueType::ARRAY) {
+			for (auto &val : headers_val->Elements()) {
+				if (val.type == JSONValueType::STRING) {
+					headers.emplace_back(val.GetString());
 				}
 			}
 		}
 
-		yyjson_val *rows_val = yyjson_obj_get(root, "rows");
-		if (rows_val && yyjson_is_arr(rows_val)) {
-			size_t r_idx, r_max;
-			yyjson_val *row_val;
-			yyjson_arr_foreach(rows_val, r_idx, r_max, row_val) {
-				if (yyjson_is_arr(row_val)) {
+		auto rows_val = root->Get("rows");
+		if (rows_val && rows_val->type == JSONValueType::ARRAY) {
+			for (auto &row_val : rows_val->Elements()) {
+				if (row_val.type == JSONValueType::ARRAY) {
 					vector<string> row;
-					size_t c_idx, c_max;
-					yyjson_val *cell_val;
-					yyjson_arr_foreach(row_val, c_idx, c_max, cell_val) {
-						if (yyjson_is_str(cell_val)) {
-							row.emplace_back(yyjson_get_str(cell_val), yyjson_get_len(cell_val));
+					for (auto &cell_val : row_val.Elements()) {
+						if (cell_val.type == JSONValueType::STRING) {
+							row.emplace_back(cell_val.GetString());
 						}
 					}
 					if (!row.empty()) {
@@ -153,100 +135,98 @@ void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &h
 	}
 }
 
-static string ExtractPandocTextFromVal(yyjson_val *val, int depth) {
+static string ExtractPandocTextFromVal(const JSONNode *val, int depth) {
 	if (!val) {
 		return "";
 	}
 	if (depth > MAX_PANDOC_DEPTH) {
 		throw InvalidInputException("Pandoc inline nesting exceeds maximum supported depth (%d)", MAX_PANDOC_DEPTH);
 	}
-	if (yyjson_is_str(val)) {
-		return string(yyjson_get_str(val), yyjson_get_len(val));
+	if (val->type == JSONValueType::STRING) {
+		return string(val->GetString());
 	}
-	if (yyjson_is_arr(val)) {
+	if (val->type == JSONValueType::ARRAY) {
 		string result;
-		size_t idx, max;
-		yyjson_val *item;
-		yyjson_arr_foreach(val, idx, max, item) {
+		for (auto &item : val->Elements()) {
 			// Counts toward depth like every other recursion. It did not used to, which
 			// meant nested ARRAYS added stack frames the guard never saw: no value of
 			// MAX_PANDOC_DEPTH could bound them, and deep-enough array nesting crashed
 			// the process instead of throwing (measured: 100000 levels segfaulted on an
 			// 8 MB stack while the same depth in objects threw cleanly).
-			result += ExtractPandocTextFromVal(item, depth + 1);
+			result += ExtractPandocTextFromVal(&item, depth + 1);
 		}
 		return result;
 	}
-	if (yyjson_is_obj(val)) {
-		yyjson_val *t_val = yyjson_obj_get(val, "t");
-		if (!t_val || !yyjson_is_str(t_val)) {
+	if (val->type == JSONValueType::OBJECT) {
+		auto t_val = val->Get("t");
+		if (!t_val || t_val->type != JSONValueType::STRING) {
 			return "";
 		}
-		const char *t = yyjson_get_str(t_val);
-		yyjson_val *c_val = yyjson_obj_get(val, "c");
+		auto t = t_val->GetString();
+		t = t.substr(0, t.find('\0'));
+		auto c_val = val->Get("c");
 
-		if (strcmp(t, "Str") == 0) {
-			if (c_val && yyjson_is_str(c_val)) {
-				return string(yyjson_get_str(c_val), yyjson_get_len(c_val));
+		if (t == "Str") {
+			if (c_val && c_val->type == JSONValueType::STRING) {
+				return string(c_val->GetString());
 			}
-		} else if (strcmp(t, "Space") == 0 || strcmp(t, "SoftBreak") == 0) {
+		} else if (t == "Space" || t == "SoftBreak") {
 			return " ";
-		} else if (strcmp(t, "LineBreak") == 0) {
+		} else if (t == "LineBreak") {
 			return "\n";
-		} else if (strcmp(t, "Strong") == 0) {
+		} else if (t == "Strong") {
 			return "**" + ExtractPandocTextFromVal(c_val, depth + 1) + "**";
-		} else if (strcmp(t, "Emph") == 0) {
+		} else if (t == "Emph") {
 			return "*" + ExtractPandocTextFromVal(c_val, depth + 1) + "*";
-		} else if (strcmp(t, "Strikeout") == 0) {
+		} else if (t == "Strikeout") {
 			return "~~" + ExtractPandocTextFromVal(c_val, depth + 1) + "~~";
-		} else if (strcmp(t, "Superscript") == 0) {
+		} else if (t == "Superscript") {
 			return "^" + ExtractPandocTextFromVal(c_val, depth + 1) + "^";
-		} else if (strcmp(t, "Subscript") == 0) {
+		} else if (t == "Subscript") {
 			return "~" + ExtractPandocTextFromVal(c_val, depth + 1) + "~";
-		} else if (strcmp(t, "Code") == 0) {
-			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 2) {
-				yyjson_val *code_str = yyjson_arr_get(c_val, 1);
-				if (code_str && yyjson_is_str(code_str)) {
-					return "`" + string(yyjson_get_str(code_str), yyjson_get_len(code_str)) + "`";
+		} else if (t == "Code") {
+			if (c_val && c_val->type == JSONValueType::ARRAY && c_val->size >= 2) {
+				auto code_str = c_val->Get(1);
+				if (code_str && code_str->type == JSONValueType::STRING) {
+					return "`" + string(code_str->GetString()) + "`";
 				}
 			}
-		} else if (strcmp(t, "Math") == 0) {
-			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 2) {
-				yyjson_val *math_str = yyjson_arr_get(c_val, 1);
-				if (math_str && yyjson_is_str(math_str)) {
-					return "$" + string(yyjson_get_str(math_str), yyjson_get_len(math_str)) + "$";
+		} else if (t == "Math") {
+			if (c_val && c_val->type == JSONValueType::ARRAY && c_val->size >= 2) {
+				auto math_str = c_val->Get(1);
+				if (math_str && math_str->type == JSONValueType::STRING) {
+					return "$" + string(math_str->GetString()) + "$";
 				}
 			}
-		} else if (strcmp(t, "Link") == 0) {
-			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 3) {
-				yyjson_val *inlines = yyjson_arr_get(c_val, 1);
-				yyjson_val *target = yyjson_arr_get(c_val, 2);
+		} else if (t == "Link") {
+			if (c_val && c_val->type == JSONValueType::ARRAY && c_val->size >= 3) {
+				auto inlines = c_val->Get(1);
+				auto target = c_val->Get(2);
 				string text = ExtractPandocTextFromVal(inlines, depth + 1);
 				string url;
-				if (target && yyjson_is_arr(target) && yyjson_arr_size(target) >= 1) {
-					yyjson_val *u = yyjson_arr_get(target, 0);
-					if (u && yyjson_is_str(u)) {
-						url = string(yyjson_get_str(u), yyjson_get_len(u));
+				if (target && target->type == JSONValueType::ARRAY && target->size >= 1) {
+					auto u = target->Get(0);
+					if (u && u->type == JSONValueType::STRING) {
+						url = string(u->GetString());
 					}
 				}
 				return "[" + text + "](" + url + ")";
 			}
-		} else if (strcmp(t, "Image") == 0) {
-			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 3) {
-				yyjson_val *inlines = yyjson_arr_get(c_val, 1);
-				yyjson_val *target = yyjson_arr_get(c_val, 2);
+		} else if (t == "Image") {
+			if (c_val && c_val->type == JSONValueType::ARRAY && c_val->size >= 3) {
+				auto inlines = c_val->Get(1);
+				auto target = c_val->Get(2);
 				string alt = ExtractPandocTextFromVal(inlines, depth + 1);
 				string src;
-				if (target && yyjson_is_arr(target) && yyjson_arr_size(target) >= 1) {
-					yyjson_val *s = yyjson_arr_get(target, 0);
-					if (s && yyjson_is_str(s)) {
-						src = string(yyjson_get_str(s), yyjson_get_len(s));
+				if (target && target->type == JSONValueType::ARRAY && target->size >= 1) {
+					auto s = target->Get(0);
+					if (s && s->type == JSONValueType::STRING) {
+						src = string(s->GetString());
 					}
 				}
 				return "![" + alt + "](" + src + ")";
 			}
-		} else if (strcmp(t, "Plain") == 0 || strcmp(t, "Para") == 0 || strcmp(t, "Span") == 0 ||
-		           strcmp(t, "SmallCaps") == 0 || strcmp(t, "Quoted") == 0 || strcmp(t, "Cite") == 0) {
+		} else if (t == "Plain" || t == "Para" || t == "Span" || t == "SmallCaps" || t == "Quoted" || t == "Cite") {
 			return ExtractPandocTextFromVal(c_val, depth + 1);
 		}
 	}
@@ -258,35 +238,33 @@ static string ExtractPandocTextFromVal(yyjson_val *val, int depth) {
 // ParseJsonListItems reads, so a real producer's list parsed to nothing and the
 // items were dropped without a trace. Sets `start` only for the ordered form,
 // so an explicit start attribute keeps precedence for the legacy shape.
-static bool ParsePandocListItems(const string &content, vector<string> &items, int &start, bool start_from_attribute) {
+static bool ParsePandocListItems(JSONTreeParser &parser, const string &content, vector<string> &items, int &start,
+                                 bool start_from_attribute) {
 	if (content.empty()) {
 		return false;
 	}
-	auto doc = ReadJson(content);
-	if (!doc) {
+	auto root = ReadJson(parser, content);
+	if (!root) {
 		return false;
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc.get());
-	yyjson_val *item_array = root;
-	if (yyjson_is_arr(root) && yyjson_arr_size(root) == 2) {
-		yyjson_val *first = yyjson_arr_get(root, 0);
-		yyjson_val *second = yyjson_arr_get(root, 1);
+	auto item_array = root;
+	if (root->type == JSONValueType::ARRAY && root->size == 2) {
+		auto first = root->Get(0);
+		auto second = root->Get(1);
 		// The ordered form is distinguishable because its leading triple starts
 		// with the list's first number; a bullet list's first item is an array of
 		// block objects.
-		if (yyjson_is_arr(first) && yyjson_arr_size(first) == 3 && yyjson_is_int(yyjson_arr_get(first, 0)) &&
-		    yyjson_is_arr(second)) {
+		if (first->type == JSONValueType::ARRAY && first->size == 3 && first->Get(0)->IsInteger() &&
+		    second->type == JSONValueType::ARRAY) {
 			if (!start_from_attribute) {
-				start = static_cast<int>(yyjson_get_int(yyjson_arr_get(first, 0)));
+				start = static_cast<int>(first->Get(0)->signed_integer);
 			}
 			item_array = second;
 		}
 	}
-	if (yyjson_is_arr(item_array)) {
-		size_t idx, max;
-		yyjson_val *item;
-		yyjson_arr_foreach(item_array, idx, max, item) {
-			string text = ExtractPandocTextFromVal(item, 0);
+	if (item_array->type == JSONValueType::ARRAY) {
+		for (auto &item : item_array->Elements()) {
+			string text = ExtractPandocTextFromVal(&item, 0);
 			if (!text.empty()) {
 				items.push_back(std::move(text));
 			}
@@ -298,21 +276,18 @@ static bool ParsePandocListItems(const string &content, vector<string> &items, i
 // Flatten a Pandoc block array to text, keeping paragraph breaks between the
 // top-level blocks. Returns "" when the content is not a Pandoc block array, so
 // callers can fall back rather than replace real content with nothing.
-static string ExtractPandocBlocksText(const string &content) {
+static string ExtractPandocBlocksText(JSONTreeParser &parser, const string &content) {
 	if (content.empty()) {
 		return "";
 	}
-	auto doc = ReadJson(content);
-	if (!doc) {
+	auto root = ReadJson(parser, content);
+	if (!root) {
 		return "";
 	}
 	string result;
-	yyjson_val *root = yyjson_doc_get_root(doc.get());
-	if (yyjson_is_arr(root)) {
-		size_t idx, max;
-		yyjson_val *block;
-		yyjson_arr_foreach(root, idx, max, block) {
-			string text = ExtractPandocTextFromVal(block, 0);
+	if (root->type == JSONValueType::ARRAY) {
+		for (auto &block : root->Elements()) {
+			string text = ExtractPandocTextFromVal(&block, 0);
 			if (text.empty()) {
 				continue;
 			}
@@ -328,30 +303,26 @@ static string ExtractPandocBlocksText(const string &content) {
 // Pandoc DefinitionList JSON: [ [ [term inlines], [ [def blocks], ... ] ], ... ].
 // Definitions are lists of blocks; ExtractPandocTextFromVal already flattens Para
 // and Plain, so a multi-block definition concatenates rather than being lost.
-static bool ParseDefinitionList(const string &content, vector<std::pair<string, vector<string>>> &entries) {
+static bool ParseDefinitionList(JSONTreeParser &parser, const string &content,
+                                vector<std::pair<string, vector<string>>> &entries) {
 	if (content.empty()) {
 		return false;
 	}
-	auto doc = ReadJson(content);
-	if (!doc) {
+	auto root = ReadJson(parser, content);
+	if (!root) {
 		return false;
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc.get());
-	if (yyjson_is_arr(root)) {
-		size_t idx, max;
-		yyjson_val *entry;
-		yyjson_arr_foreach(root, idx, max, entry) {
-			if (!yyjson_is_arr(entry) || yyjson_arr_size(entry) < 2) {
+	if (root->type == JSONValueType::ARRAY) {
+		for (auto &entry : root->Elements()) {
+			if (entry.type != JSONValueType::ARRAY || entry.size < 2) {
 				continue;
 			}
-			string term = ExtractPandocTextFromVal(yyjson_arr_get(entry, 0), 0);
+			string term = ExtractPandocTextFromVal(entry.Get(0), 0);
 			vector<string> definitions;
-			yyjson_val *def_list = yyjson_arr_get(entry, 1);
-			if (yyjson_is_arr(def_list)) {
-				size_t d_idx, d_max;
-				yyjson_val *def;
-				yyjson_arr_foreach(def_list, d_idx, d_max, def) {
-					string text = ExtractPandocTextFromVal(def, 0);
+			auto def_list = entry.Get(1);
+			if (def_list->type == JSONValueType::ARRAY) {
+				for (auto &def : def_list->Elements()) {
+					string text = ExtractPandocTextFromVal(&def, 0);
 					if (!text.empty()) {
 						definitions.push_back(std::move(text));
 					}
@@ -380,43 +351,42 @@ static string SanitizeForHtmlComment(const string &text) {
 	return safe;
 }
 
-string DuckBlockFunctions::ExtractPandocText(const string &content, int depth) {
+string DuckBlockFunctions::ExtractPandocText(JSONTreeParser &parser, const string &content, int depth) {
 	if (content.empty()) {
 		return "";
 	}
-	auto doc = ReadJson(content);
-	if (!doc) {
+	auto root = ReadJson(parser, content);
+	if (!root) {
 		return "";
 	}
-	return ExtractPandocTextFromVal(yyjson_doc_get_root(doc.get()), depth);
+	return ExtractPandocTextFromVal(root, depth);
 }
 
-bool DuckBlockFunctions::IsPandocTableFormat(const string &content) {
+bool DuckBlockFunctions::IsPandocTableFormat(JSONTreeParser &parser, const string &content) {
 	if (content.empty()) {
 		return false;
 	}
-	auto doc = ReadJson(content);
-	if (!doc) {
+	auto root = ReadJson(parser, content);
+	if (!root) {
 		return false;
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc.get());
 	bool is_table = false;
-	if (yyjson_is_arr(root)) {
-		size_t sz = yyjson_arr_size(root);
+	if (root->type == JSONValueType::ARRAY) {
+		size_t sz = root->size;
 		if (sz == 5 || sz == 6) {
-			yyjson_val *e1 = yyjson_arr_get(root, 1);
-			if (e1 && yyjson_is_arr(e1) && yyjson_arr_size(e1) > 0) {
-				yyjson_val *first = yyjson_arr_get(e1, 0);
-				if (first && yyjson_is_obj(first)) {
-					yyjson_val *t = yyjson_obj_get(first, "t");
-					if (t && yyjson_is_str(t) && strncmp(yyjson_get_str(t), "Align", 5) == 0) {
+			auto e1 = root->Get(1);
+			if (e1 && e1->type == JSONValueType::ARRAY && e1->size > 0) {
+				auto first = e1->Get(0);
+				if (first && first->type == JSONValueType::OBJECT) {
+					auto t = first->Get("t");
+					if (t && t->type == JSONValueType::STRING && StringUtil::StartsWith(t->GetString(), "Align")) {
 						is_table = true;
 					}
 				}
 			}
 			if (!is_table && sz == 6) {
-				yyjson_val *e2 = yyjson_arr_get(root, 2);
-				if (e2 && yyjson_is_arr(e2)) {
+				auto e2 = root->Get(2);
+				if (e2 && e2->type == JSONValueType::ARRAY) {
 					is_table = true;
 				}
 			}
@@ -425,67 +395,60 @@ bool DuckBlockFunctions::IsPandocTableFormat(const string &content) {
 	return is_table;
 }
 
-static string ExtractPandocCellText(yyjson_val *cell_val) {
+static string ExtractPandocCellText(const JSONNode *cell_val) {
 	if (!cell_val) {
 		return "";
 	}
 	return ExtractPandocTextFromVal(cell_val, 0);
 }
 
-void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> &headers,
+void DuckBlockFunctions::ParsePandocTable(JSONTreeParser &parser, const string &content, vector<string> &headers,
                                           vector<vector<string>> &rows) {
 	if (content.empty()) {
 		return;
 	}
-	auto doc = ReadJson(content);
-	if (!doc) {
+	auto root = ReadJson(parser, content);
+	if (!root) {
 		return;
 	}
-	yyjson_val *root = yyjson_doc_get_root(doc.get());
-	if (!yyjson_is_arr(root)) {
+	if (root->type != JSONValueType::ARRAY) {
 		return;
 	}
 
-	size_t root_size = yyjson_arr_size(root);
+	size_t root_size = root->size;
 
 	if (root_size == 5) {
 		// Legacy format: [caption, alignments, widths, headers, rows]
-		yyjson_val *headers_arr = yyjson_arr_get(root, 3);
-		if (headers_arr && yyjson_is_arr(headers_arr)) {
-			size_t idx, max;
-			yyjson_val *cell;
-			yyjson_arr_foreach(headers_arr, idx, max, cell) {
-				headers.push_back(ExtractPandocCellText(cell));
+		auto headers_arr = root->Get(3);
+		if (headers_arr && headers_arr->type == JSONValueType::ARRAY) {
+			for (auto &cell : headers_arr->Elements()) {
+				headers.push_back(ExtractPandocCellText(&cell));
 			}
 		}
 
-		yyjson_val *rows_arr = yyjson_arr_get(root, 4);
-		if (rows_arr && yyjson_is_arr(rows_arr)) {
-			while (yyjson_arr_size(rows_arr) == 1) {
-				yyjson_val *first_row = yyjson_arr_get(rows_arr, 0);
-				if (!first_row || !yyjson_is_arr(first_row)) {
+		auto rows_arr = root->Get(4);
+		if (rows_arr && rows_arr->type == JSONValueType::ARRAY) {
+			while (rows_arr->size == 1) {
+				auto first_row = rows_arr->Get(0);
+				if (!first_row || first_row->type != JSONValueType::ARRAY) {
 					break;
 				}
-				yyjson_val *first_elem = yyjson_arr_get(first_row, 0);
-				if (!first_elem || !yyjson_is_arr(first_elem)) {
+				auto first_elem = first_row->Get(0);
+				if (!first_elem || first_elem->type != JSONValueType::ARRAY) {
 					break;
 				}
-				yyjson_val *first_inner = yyjson_arr_get(first_elem, 0);
-				if (!first_inner || !yyjson_is_arr(first_inner)) {
+				auto first_inner = first_elem->Get(0);
+				if (!first_inner || first_inner->type != JSONValueType::ARRAY) {
 					break;
 				}
 				rows_arr = first_row;
 			}
 
-			size_t r_idx, r_max;
-			yyjson_val *row;
-			yyjson_arr_foreach(rows_arr, r_idx, r_max, row) {
-				if (yyjson_is_arr(row)) {
+			for (auto &row : rows_arr->Elements()) {
+				if (row.type == JSONValueType::ARRAY) {
 					vector<string> r;
-					size_t c_idx, c_max;
-					yyjson_val *cell;
-					yyjson_arr_foreach(row, c_idx, c_max, cell) {
-						r.push_back(ExtractPandocCellText(cell));
+					for (auto &cell : row.Elements()) {
+						r.push_back(ExtractPandocCellText(&cell));
 					}
 					if (!r.empty()) {
 						rows.push_back(std::move(r));
@@ -495,24 +458,20 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 		}
 	} else if (root_size >= 6) {
 		// Modern format: [attr, caption, colspec, tableHead, tableBodies, tableFoot]
-		yyjson_val *table_head = yyjson_arr_get(root, 3);
-		if (table_head && yyjson_is_arr(table_head) && yyjson_arr_size(table_head) >= 2) {
-			yyjson_val *head_rows = yyjson_arr_get(table_head, 1);
-			if (head_rows && yyjson_is_arr(head_rows)) {
-				size_t hr_idx, hr_max;
-				yyjson_val *head_row;
-				yyjson_arr_foreach(head_rows, hr_idx, hr_max, head_row) {
-					if (yyjson_is_arr(head_row) && yyjson_arr_size(head_row) >= 2) {
-						yyjson_val *cells = yyjson_arr_get(head_row, 1);
-						if (cells && yyjson_is_arr(cells)) {
-							size_t c_idx, c_max;
-							yyjson_val *cell;
-							yyjson_arr_foreach(cells, c_idx, c_max, cell) {
-								if (yyjson_is_arr(cell) && yyjson_arr_size(cell) >= 5) {
-									yyjson_val *blocks = yyjson_arr_get(cell, 4);
+		auto table_head = root->Get(3);
+		if (table_head && table_head->type == JSONValueType::ARRAY && table_head->size >= 2) {
+			auto head_rows = table_head->Get(1);
+			if (head_rows && head_rows->type == JSONValueType::ARRAY) {
+				for (auto &head_row : head_rows->Elements()) {
+					if (head_row.type == JSONValueType::ARRAY && head_row.size >= 2) {
+						auto cells = head_row.Get(1);
+						if (cells && cells->type == JSONValueType::ARRAY) {
+							for (auto &cell : cells->Elements()) {
+								if (cell.type == JSONValueType::ARRAY && cell.size >= 5) {
+									auto blocks = cell.Get(4);
 									headers.push_back(ExtractPandocCellText(blocks));
 								} else {
-									headers.push_back(ExtractPandocCellText(cell));
+									headers.push_back(ExtractPandocCellText(&cell));
 								}
 							}
 						}
@@ -521,29 +480,23 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 			}
 		}
 
-		yyjson_val *table_bodies = yyjson_arr_get(root, 4);
-		if (table_bodies && yyjson_is_arr(table_bodies)) {
-			size_t b_idx, b_max;
-			yyjson_val *body;
-			yyjson_arr_foreach(table_bodies, b_idx, b_max, body) {
-				if (yyjson_is_arr(body) && yyjson_arr_size(body) >= 4) {
-					yyjson_val *body_rows = yyjson_arr_get(body, 3);
-					if (body_rows && yyjson_is_arr(body_rows)) {
-						size_t r_idx, r_max;
-						yyjson_val *row;
-						yyjson_arr_foreach(body_rows, r_idx, r_max, row) {
-							if (yyjson_is_arr(row) && yyjson_arr_size(row) >= 2) {
-								yyjson_val *cells = yyjson_arr_get(row, 1);
-								if (cells && yyjson_is_arr(cells)) {
+		auto table_bodies = root->Get(4);
+		if (table_bodies && table_bodies->type == JSONValueType::ARRAY) {
+			for (auto &body : table_bodies->Elements()) {
+				if (body.type == JSONValueType::ARRAY && body.size >= 4) {
+					auto body_rows = body.Get(3);
+					if (body_rows && body_rows->type == JSONValueType::ARRAY) {
+						for (auto &row : body_rows->Elements()) {
+							if (row.type == JSONValueType::ARRAY && row.size >= 2) {
+								auto cells = row.Get(1);
+								if (cells && cells->type == JSONValueType::ARRAY) {
 									vector<string> r;
-									size_t c_idx, c_max;
-									yyjson_val *cell;
-									yyjson_arr_foreach(cells, c_idx, c_max, cell) {
-										if (yyjson_is_arr(cell) && yyjson_arr_size(cell) >= 5) {
-											yyjson_val *blocks = yyjson_arr_get(cell, 4);
+									for (auto &cell : cells->Elements()) {
+										if (cell.type == JSONValueType::ARRAY && cell.size >= 5) {
+											auto blocks = cell.Get(4);
 											r.push_back(ExtractPandocCellText(blocks));
 										} else {
-											r.push_back(ExtractPandocCellText(cell));
+											r.push_back(ExtractPandocCellText(&cell));
 										}
 									}
 									if (!r.empty()) {
@@ -756,8 +709,8 @@ static string EscapeMarkdownText(const string &content, bool at_line_start) {
 // acceptance, not compatibility with anything known, and the difference
 // matters if someone later reasons from its presence.
 
-string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_type, const string &content,
-                                                        int32_t level, const string &encoding,
+string DuckBlockFunctions::RenderBlockElementToMarkdown(JSONTreeParser &parser, const string &element_type,
+                                                        const string &content, int32_t level, const string &encoding,
                                                         const Value &attributes) {
 	string result;
 
@@ -815,7 +768,7 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 		// verbatim put raw AST into the document behind a '>'.
 		string source = content;
 		if (encoding == Vocab::ENCODING_JSON) {
-			string extracted = ExtractPandocBlocksText(content);
+			string extracted = ExtractPandocBlocksText(parser, content);
 			if (!extracted.empty()) {
 				source = extracted;
 			}
@@ -845,9 +798,9 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 				start = ParseIntAttribute("start", start_str);
 			}
 
-			auto items = ParseJsonListItems(content);
+			auto items = ParseJsonListItems(parser, content);
 			if (items.empty()) {
-				ParsePandocListItems(content, items, start, start_from_attribute);
+				ParsePandocListItems(parser, content, items, start, start_from_attribute);
 			}
 			int item_num = start;
 			for (const auto &item : items) {
@@ -870,12 +823,12 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 		if (encoding == "json") {
 			// Try standard {"headers": [...], "rows": [...]} format first
 			if (content.find("\"headers\"") != string::npos) {
-				ParseJsonTable(content, headers, rows);
+				ParseJsonTable(parser, content, headers, rows);
 				parsed = !headers.empty();
 			}
 			// Try Pandoc table format if standard format didn't work
-			if (!parsed && IsPandocTableFormat(content)) {
-				ParsePandocTable(content, headers, rows);
+			if (!parsed && IsPandocTableFormat(parser, content)) {
+				ParsePandocTable(parser, content, headers, rows);
 				parsed = !headers.empty() || !rows.empty();
 			}
 		}
@@ -1006,7 +959,7 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 		// so TYPE_DEFLIST only ever arrives from an external producer -- verified, we
 		// have exactly one mention of it and it is this consuming branch.
 		vector<std::pair<string, vector<string>>> entries;
-		if (encoding == Vocab::ENCODING_JSON && ParseDefinitionList(content, entries)) {
+		if (encoding == Vocab::ENCODING_JSON && ParseDefinitionList(parser, content, entries)) {
 			for (const auto &entry : entries) {
 				result += entry.first + "\n";
 				for (const auto &definition : entry.second) {
@@ -1051,12 +1004,12 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 // RenderDuckBlockToMarkdown (unified block/inline rendering)
 //===--------------------------------------------------------------------===//
 
-string DuckBlockFunctions::RenderDuckBlockToMarkdown(const string &kind, const string &element_type,
-                                                     const string &content, int32_t level, const string &encoding,
-                                                     const Value &attributes) {
+string DuckBlockFunctions::RenderDuckBlockToMarkdown(JSONTreeParser &parser, const string &kind,
+                                                     const string &element_type, const string &content, int32_t level,
+                                                     const string &encoding, const Value &attributes) {
 	if (kind == Vocab::KIND_BLOCK) {
 		// Delegate to block rendering
-		return RenderBlockElementToMarkdown(element_type, content, level, encoding, attributes);
+		return RenderBlockElementToMarkdown(parser, element_type, content, level, encoding, attributes);
 	} else if (kind == Vocab::KIND_INLINE) {
 		// Use inline rendering
 		return RenderInlineElementToMarkdown(element_type, content, attributes);
@@ -1068,7 +1021,7 @@ string DuckBlockFunctions::RenderDuckBlockToMarkdown(const string &kind, const s
 		    element_type == Vocab::TYPE_TABLE || element_type == Vocab::TYPE_HR ||
 		    element_type == Vocab::TYPE_METADATA || element_type == "frontmatter" || element_type == Vocab::TYPE_CODE ||
 		    element_type == Vocab::TYPE_IMAGE) {
-			return RenderBlockElementToMarkdown(element_type, content, level, encoding, attributes);
+			return RenderBlockElementToMarkdown(parser, element_type, content, level, encoding, attributes);
 		}
 		// Assume inline otherwise
 		return RenderInlineElementToMarkdown(element_type, content, attributes);
@@ -1278,7 +1231,8 @@ static string IndentContinuation(const string &text, const string &marker) {
 // Render [begin, end) of a duck_block list. Recursive, because a `caption` has to
 // be rendered as a unit before it can be decorated -- markdown has no caption
 // syntax, so the alternative is prose no reader can tell from body text.
-static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t begin, idx_t end, int depth) {
+static string RenderDuckBlockRange(JSONTreeParser &parser, const vector<Value> &list_children, idx_t begin, idx_t end,
+                                   int depth) {
 	string result;
 	bool last_was_inline = false;
 
@@ -1353,13 +1307,13 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 						for (idx_t j = i + 1; j < scope_end;) {
 							if (DuckBlockLevel(list_children[j]) != item_level) {
 								const idx_t stray_end = SkipElementScope(list_children, j, scope_end);
-								result += RenderDuckBlockRange(list_children, j, stray_end, depth + 1);
+								result += RenderDuckBlockRange(parser, list_children, j, stray_end, depth + 1);
 								j = stray_end;
 								continue;
 							}
 							const idx_t item_end = SkipElementScope(list_children, j, scope_end);
 							string text = item_end > j + 1
-							                  ? RenderDuckBlockRange(list_children, j + 1, item_end, depth + 1)
+							                  ? RenderDuckBlockRange(parser, list_children, j + 1, item_end, depth + 1)
 							                  : DuckBlockContent(list_children[j]);
 							StringUtil::Trim(text);
 							// Anything not marked a definition is a label: an item whose
@@ -1412,7 +1366,7 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 							// matching a shape we know. Losing the list structure
 							// costs formatting; dropping it costs the text.
 							const idx_t stray_end = SkipElementScope(list_children, j, scope_end);
-							result += RenderDuckBlockRange(list_children, j, stray_end, depth + 1);
+							result += RenderDuckBlockRange(parser, list_children, j, stray_end, depth + 1);
 							j = stray_end;
 							continue;
 						}
@@ -1422,7 +1376,7 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 						// child scope dropped the text of every item that carried it
 						// directly, which is the shape the live producer emits.
 						string inner = item_end > j + 1
-						                   ? RenderDuckBlockRange(list_children, j + 1, item_end, depth + 1)
+						                   ? RenderDuckBlockRange(parser, list_children, j + 1, item_end, depth + 1)
 						                   : DuckBlockContent(list_children[j]);
 						StringUtil::Trim(inner);
 						// TIGHT ITEM: the run and its first sibling have no blank line
@@ -1463,7 +1417,7 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 				// than dropping the blocks it holds.
 				const idx_t scope_end = SkipElementScope(list_children, i, end);
 				if (scope_end > i + 1) {
-					string inner = RenderDuckBlockRange(list_children, i + 1, scope_end, depth + 1);
+					string inner = RenderDuckBlockRange(parser, list_children, i + 1, scope_end, depth + 1);
 					StringUtil::Trim(inner);
 					if (last_was_inline) {
 						result += "\n\n";
@@ -1476,7 +1430,7 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 			} else if (element_type == Vocab::TYPE_BLOCKQUOTE) {
 				const idx_t scope_end = SkipElementScope(list_children, i, end);
 				if (scope_end > i + 1) {
-					string inner = RenderDuckBlockRange(list_children, i + 1, scope_end, depth + 1);
+					string inner = RenderDuckBlockRange(parser, list_children, i + 1, scope_end, depth + 1);
 					StringUtil::Trim(inner);
 					if (last_was_inline) {
 						result += "\n\n";
@@ -1527,15 +1481,15 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 			if (caption_begin < scope_end && !alt.empty()) {
 				string caption_text =
 				    caption_end > caption_begin + 1
-				        ? RenderDuckBlockRange(list_children, caption_begin + 1, caption_end, depth + 1)
+				        ? RenderDuckBlockRange(parser, list_children, caption_begin + 1, caption_end, depth + 1)
 				        : DuckBlockContent(list_children[caption_begin]);
 				StringUtil::Trim(caption_text);
 				if (caption_text == alt) {
 					if (last_was_inline) {
 						result += "\n\n";
 					}
-					result += RenderDuckBlockRange(list_children, i + 1, caption_begin, depth + 1);
-					result += RenderDuckBlockRange(list_children, caption_end, scope_end, depth + 1);
+					result += RenderDuckBlockRange(parser, list_children, i + 1, caption_begin, depth + 1);
+					result += RenderDuckBlockRange(parser, list_children, caption_end, scope_end, depth + 1);
 					last_was_inline = false;
 					i = scope_end;
 					continue;
@@ -1553,7 +1507,7 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 			// its text when it does not. Without the fallback this branch consumed
 			// a childless caption and emitted nothing, which also shadowed the leaf
 			// renderer -- so the text was lost twice over.
-			string inner = scope_end > i + 1 ? RenderDuckBlockRange(list_children, i + 1, scope_end, depth + 1)
+			string inner = scope_end > i + 1 ? RenderDuckBlockRange(parser, list_children, i + 1, scope_end, depth + 1)
 			                                 : DuckBlockContent(list_children[i]);
 			StringUtil::Trim(inner);
 			if (!inner.empty()) {
@@ -1621,7 +1575,7 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 		                                   DuckBlockLevel(list_children[i + 1]) > DuckBlockLevel(list_children[i]);
 		if ((content.empty() || heading_with_children) && scope_end > i + 1 && depth < MAX_DUCK_BLOCK_NESTING &&
 		    DuckBlockKind(list_children[i + 1]) == Vocab::KIND_INLINE) {
-			content = RenderDuckBlockRange(list_children, i + 1, scope_end, depth + 1);
+			content = RenderDuckBlockRange(parser, list_children, i + 1, scope_end, depth + 1);
 			consumed_children = true;
 		}
 
@@ -1632,8 +1586,8 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 			result += "\n\n";
 		}
 
-		result +=
-		    DuckBlockFunctions::RenderDuckBlockToMarkdown(kind, element_type, content, level, encoding, attributes);
+		result += DuckBlockFunctions::RenderDuckBlockToMarkdown(parser, kind, element_type, content, level, encoding,
+		                                                        attributes);
 		last_was_inline = is_inline;
 		i = consumed_children ? scope_end : i + 1;
 	}
@@ -1711,8 +1665,8 @@ static string YamlBlockScalar(const string &text, int indent) {
 
 // Emit the YAML for the kind='value' scope opening at `i`, which nests by level
 // exactly as block containers do. Returns the index just past that scope.
-static idx_t RenderMetaValue(const vector<Value> &children, idx_t i, idx_t end, int indent, bool in_sequence,
-                             string &out) {
+static idx_t RenderMetaValue(JSONTreeParser &parser, const vector<Value> &children, idx_t i, idx_t end, int indent,
+                             bool in_sequence, string &out) {
 	const idx_t scope_end = SkipElementScope(children, i, end);
 	auto &fields = StructValue::GetChildren(children[i]);
 	const string element_type =
@@ -1738,7 +1692,7 @@ static idx_t RenderMetaValue(const vector<Value> &children, idx_t i, idx_t end, 
 				j++;
 				continue;
 			}
-			j = RenderMetaValue(children, j, scope_end, indent + 2, children_in_sequence, out);
+			j = RenderMetaValue(parser, children, j, scope_end, indent + 2, children_in_sequence, out);
 		}
 		return scope_end;
 	}
@@ -1748,11 +1702,11 @@ static idx_t RenderMetaValue(const vector<Value> &children, idx_t i, idx_t end, 
 		// The one value type emitted bare rather than quoted.
 		scalar = (content == "true") ? "true" : "false";
 	} else if (element_type == Vocab::VALUE_INLINES) {
-		string rendered = RenderDuckBlockRange(children, i + 1, scope_end, 0);
+		string rendered = RenderDuckBlockRange(parser, children, i + 1, scope_end, 0);
 		StringUtil::Trim(rendered);
 		scalar = YamlQuote(rendered);
 	} else if (element_type == Vocab::VALUE_BLOCKS) {
-		string rendered = RenderDuckBlockRange(children, i + 1, scope_end, 0);
+		string rendered = RenderDuckBlockRange(parser, children, i + 1, scope_end, 0);
 		StringUtil::Trim(rendered);
 		out += prefix + (label.empty() ? string("-") : label) + " " + YamlBlockScalar(rendered, indent);
 		return scope_end;
@@ -1772,14 +1726,14 @@ static idx_t RenderMetaValue(const vector<Value> &children, idx_t i, idx_t end, 
 
 // Build the frontmatter for a document's kind='value' elements. Empty when the
 // document has no metadata.
-static string RenderDocumentFrontmatter(const vector<Value> &children) {
+static string RenderDocumentFrontmatter(JSONTreeParser &parser, const vector<Value> &children) {
 	string body;
 	for (idx_t i = 0; i < children.size();) {
 		if (DuckBlockKind(children[i]) != Vocab::KIND_VALUE) {
 			i++;
 			continue;
 		}
-		i = RenderMetaValue(children, i, children.size(), 0, false, body);
+		i = RenderMetaValue(parser, children, i, children.size(), 0, false, body);
 	}
 	if (body.empty()) {
 		return "";
@@ -1804,7 +1758,7 @@ static bool HasFrontmatterBlock(const vector<Value> &children) {
 	return false;
 }
 
-string DuckBlockFunctions::RenderDuckBlocksToMarkdown(const Value &blocks_value) {
+string DuckBlockFunctions::RenderDuckBlocksToMarkdown(JSONTreeParser &parser, const Value &blocks_value) {
 	if (blocks_value.IsNull() || blocks_value.type().id() != LogicalTypeId::LIST) {
 		return "";
 	}
@@ -1846,9 +1800,9 @@ string DuckBlockFunctions::RenderDuckBlocksToMarkdown(const Value &blocks_value)
 	// this vocabulary targets -- has somewhere to put it, so it round-trips as
 	// frontmatter instead of being dropped.
 	if (!HasFrontmatterBlock(list_children)) {
-		result = RenderDocumentFrontmatter(list_children);
+		result = RenderDocumentFrontmatter(parser, list_children);
 	}
-	result += RenderDuckBlockRange(list_children, 0, list_children.size(), 0);
+	result += RenderDuckBlockRange(parser, list_children, 0, list_children.size(), 0);
 	return result;
 }
 
@@ -1865,6 +1819,7 @@ void DuckBlockFunctions::RegisterDuckBlockToMdFunction(ExtensionLoader &loader) 
 	    "duck_block_to_md", {duck_block_type}, markdown_type,
 	    [](DataChunk &args, ExpressionState &state, Vector &result) {
 		    auto &block_vector = args.data[0];
+		    JSONTreeParser parser;
 
 		    for (idx_t i = 0; i < args.size(); i++) {
 			    auto block_value = block_vector.GetValue(i);
@@ -1897,7 +1852,8 @@ void DuckBlockFunctions::RegisterDuckBlockToMdFunction(ExtensionLoader &loader) 
 			                          : struct_children[Vocab::ENCODING_IDX].ToString();
 			    Value attributes = struct_children[Vocab::ATTRIBUTES_IDX];
 
-			    string markdown = RenderDuckBlockToMarkdown(kind, element_type, content, level, encoding, attributes);
+			    string markdown =
+			        RenderDuckBlockToMarkdown(parser, kind, element_type, content, level, encoding, attributes);
 			    result.SetValue(i, Value(markdown));
 		    }
 	    });
@@ -1935,6 +1891,7 @@ void DuckBlockFunctions::RegisterDuckBlocksToMdFunction(ExtensionLoader &loader)
 	ScalarFunction duck_blocks_to_md("duck_blocks_to_md", {duck_block_list_type}, markdown_type,
 	                                 [](DataChunk &args, ExpressionState &state, Vector &result) {
 		                                 auto &blocks_vector = args.data[0];
+		                                 JSONTreeParser parser;
 
 		                                 for (idx_t i = 0; i < args.size(); i++) {
 			                                 auto blocks_value = blocks_vector.GetValue(i);
@@ -1944,7 +1901,7 @@ void DuckBlockFunctions::RegisterDuckBlocksToMdFunction(ExtensionLoader &loader)
 				                                 continue;
 			                                 }
 
-			                                 string markdown = RenderDuckBlocksToMarkdown(blocks_value);
+			                                 string markdown = RenderDuckBlocksToMarkdown(parser, blocks_value);
 			                                 result.SetValue(i, Value(markdown));
 		                                 }
 	                                 });
@@ -1988,6 +1945,7 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 	    "duck_blocks_to_sections", {duck_block_list_type}, section_list_type,
 	    [](DataChunk &args, ExpressionState &state, Vector &result) {
 		    auto &blocks_vector = args.data[0];
+		    JSONTreeParser parser;
 
 		    for (idx_t row_idx = 0; row_idx < args.size(); row_idx++) {
 			    auto blocks_value = blocks_vector.GetValue(row_idx);
@@ -2015,7 +1973,7 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 			    // duck_blocks_to_md produced "- LISTWORD" from the same input.
 			    idx_t content_begin = 0;
 			    auto render_range = [&](idx_t begin, idx_t end) -> string {
-				    return end > begin ? RenderDuckBlockRange(list_children, begin, end, 0) : string();
+				    return end > begin ? RenderDuckBlockRange(parser, list_children, begin, end, 0) : string();
 			    };
 
 			    auto flush_section = [&](const string &body) {

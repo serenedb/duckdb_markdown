@@ -421,8 +421,9 @@ void MarkdownCopyFunction::Combine(ExecutionContext &context, FunctionData &bind
 		// used to have its own row-at-a-time walk, which could not absorb inline
 		// runs and rendered `# H` + empty paragraph + inlines with two spurious
 		// blank lines between heading and body.
+		JSONTreeParser parser;
 		lstate.buffer += DuckBlockFunctions::RenderDuckBlocksToMarkdown(
-		    Value::LIST(MarkdownTypes::DuckBlockType(), std::move(lstate.elements)));
+		    parser, Value::LIST(MarkdownTypes::DuckBlockType(), std::move(lstate.elements)));
 		lstate.elements.clear();
 	}
 

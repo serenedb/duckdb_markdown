@@ -1,6 +1,7 @@
 #pragma once
 
 #include "duckdb.hpp"
+#include "duckdb/common/json_document.hpp"
 #include "duckdb/function/scalar_function.hpp"
 
 namespace duckdb {
@@ -37,8 +38,9 @@ public:
 	 * @param attributes The element attributes as a MAP value
 	 * @return The rendered Markdown string
 	 */
-	static string RenderDuckBlockToMarkdown(const string &kind, const string &element_type, const string &content,
-	                                        int32_t level, const string &encoding, const Value &attributes);
+	static string RenderDuckBlockToMarkdown(JSONTreeParser &parser, const string &kind, const string &element_type,
+	                                        const string &content, int32_t level, const string &encoding,
+	                                        const Value &attributes);
 
 	/**
 	 * @brief Render a list of duck_block structs to Markdown string
@@ -46,7 +48,7 @@ public:
 	 * @param blocks_value A LIST of duck_block structs
 	 * @return The concatenated Markdown string
 	 */
-	static string RenderDuckBlocksToMarkdown(const Value &blocks_value);
+	static string RenderDuckBlocksToMarkdown(JSONTreeParser &parser, const Value &blocks_value);
 
 	/**
 	 * @brief Look up a key in a duck_block's attributes MAP, or "" when absent
@@ -59,28 +61,31 @@ private:
 	static void RegisterDuckBlocksToSectionsFunction(ExtensionLoader &loader);
 
 	// Render block-level element to markdown
-	static string RenderBlockElementToMarkdown(const string &element_type, const string &content, int32_t level,
-	                                           const string &encoding, const Value &attributes);
+	static string RenderBlockElementToMarkdown(JSONTreeParser &parser, const string &element_type,
+	                                           const string &content, int32_t level, const string &encoding,
+	                                           const Value &attributes);
 
 	// Render inline element to markdown
 	static string RenderInlineElementToMarkdown(const string &element_type, const string &content,
 	                                            const Value &attributes);
 
 	// Helper to parse JSON list items
-	static vector<string> ParseJsonListItems(const string &content);
+	static vector<string> ParseJsonListItems(JSONTreeParser &parser, const string &content);
 
 	// Helper to parse JSON table
-	static void ParseJsonTable(const string &content, vector<string> &headers, vector<vector<string>> &rows);
+	static void ParseJsonTable(JSONTreeParser &parser, const string &content, vector<string> &headers,
+	                           vector<vector<string>> &rows);
 
 	// Helper to extract plain text from Pandoc AST inline elements.
 	// depth guards against unbounded recursion on adversarially nested input.
-	static string ExtractPandocText(const string &content, int depth = 0);
+	static string ExtractPandocText(JSONTreeParser &parser, const string &content, int depth = 0);
 
 	// Check if content looks like Pandoc table format
-	static bool IsPandocTableFormat(const string &content);
+	static bool IsPandocTableFormat(JSONTreeParser &parser, const string &content);
 
 	// Parse Pandoc table format into headers and rows
-	static void ParsePandocTable(const string &content, vector<string> &headers, vector<vector<string>> &rows);
+	static void ParsePandocTable(JSONTreeParser &parser, const string &content, vector<string> &headers,
+	                             vector<vector<string>> &rows);
 };
 
 } // namespace duckdb
