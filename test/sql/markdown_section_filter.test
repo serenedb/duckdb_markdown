@@ -1,0 +1,38 @@
+# name: test/sql/markdown_section_filter.test
+# description: section_filter keeps the named section and its subsections, not other sections whose path is as long as the filter
+# group: [sql]
+
+require markdown
+
+statement ok
+COPY (SELECT E'# Usage\n\nuse it\n\n## Flags\n\nflags\n\n# Guide\n\nread it\n\n# Other\n\nmore' AS md)
+TO '{TEST_DIR}/section_filter.md' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query II
+SELECT section_id, title FROM read_markdown_sections('{TEST_DIR}/section_filter.md') ORDER BY section_id;
+----
+flags	Flags
+guide	Guide
+other	Other
+usage	Usage
+
+query II
+SELECT section_id, title FROM read_markdown_sections('{TEST_DIR}/section_filter.md', section_filter := 'usage') ORDER BY section_id;
+----
+flags	Flags
+usage	Usage
+
+query II
+SELECT section_id, title FROM read_markdown_sections('{TEST_DIR}/section_filter.md', section_filter := 'flags');
+----
+flags	Flags
+
+query II
+SELECT section_id, title FROM read_markdown_sections('{TEST_DIR}/section_filter.md#guide');
+----
+guide	Guide
+
+query I
+SELECT count(*) FROM read_markdown_sections('{TEST_DIR}/section_filter.md', section_filter := 'missing');
+----
+0

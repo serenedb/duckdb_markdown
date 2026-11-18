@@ -211,8 +211,7 @@ static bool SectionMatchesFilter(const string &section_id, const string &section
 		return true;
 	}
 	// Check if section_path contains the filter as a component
-	if (section_path.find("/" + filter + "/") != string::npos ||
-	    section_path.find("/" + filter) == section_path.length() - filter.length() - 1) {
+	if (section_path.find("/" + filter + "/") != string::npos || StringUtil::EndsWith(section_path, "/" + filter)) {
 		return true;
 	}
 	return false;
