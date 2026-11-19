@@ -313,7 +313,7 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
 		FunctionDescription desc;
 		desc.parameter_names = {"markdown"};
 		desc.description = "Extract hyperlinks from Markdown content.";
-		desc.examples = {"md_extract_links('[DuckDB](https://duckdb.org)')"};
+		desc.examples = {"md_extract_links('[Example](https://example.com)')"};
 		desc.categories = {"markdown"};
 		info.descriptions.push_back(desc);
 		loader.RegisterFunction(std::move(info));
