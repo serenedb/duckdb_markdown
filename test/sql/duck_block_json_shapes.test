@@ -1,0 +1,77 @@
+# name: test/sql/duck_block_json_shapes.test
+# description: JSON-encoded tables, lists, definition lists and blockquotes of unexpected shapes render what they can read and skip the rest
+# group: [sql]
+
+require markdown
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'table', content: '{"headers": ["A", 1, "B"], "rows": [["a", null, "b"], "not a row", [1, 2], ["c", "d"]]}', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'| A | B |\n|---|---|\n| a | b |\n| c | d |\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'table', content: '{"headers": ["A", "B"]}', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'| A | B |\n|---|---|\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'table', content: '{"headers": ["A"], "rows": "none"}', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'| A |\n|---|\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'list', content: '[not json', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'list', content: '[[{"t":"Plain","c":[{"t":"Str","c":"only"}]}]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'- only\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'list', content: '[{"t":"Plain","c":[{"t":"Str","c":"a"}]},{"t":"Plain","c":[{"t":"Str","c":"b"}]}]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'- a\n- b\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'list', content: '[[{"t":"Para","c":[{"t":"Str","c":"one"}]},{"t":"Para","c":[{"t":"Str","c":"two"}]},{"t":"Para","c":[{"t":"Str","c":"three"}]}],[{"t":"Plain","c":[{"t":"Str","c":"four"}]}]]', level: NULL, encoding: 'json', attributes: MAP{'list_type': 'ordered'}, element_order: 0})
+     LIKE E'1. %\n2. four\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'list', content: '[[3,{"t":"Decimal"},{"t":"Period"}],{"t":"Plain","c":[{"t":"Str","c":"x"}]}]', level: NULL, encoding: 'json', attributes: MAP{'list_type': 'ordered'}, element_order: 0})
+     = E'1. x\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'deflist', content: '["not an entry",[[{"t":"Str","c":"lonely"}]],[[{"t":"Str","c":"Term"}],[[{"t":"Plain","c":[{"t":"Str","c":"Def"}]}]]],[[{"t":"Str","c":"Bare"}],"no definitions"]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'Term\n: Def\n\nBare\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'deflist', content: '{"term": "def"}', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'{"term": "def"}\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '["first paragraph","second paragraph"]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'> first paragraph\n> \n> second paragraph\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '{"t":"Para","c":[{"t":"Str","c":"solo"}]}', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'> {"t":"Para","c":[{"t":"Str","c":"solo"}]}\n\n';
+----
+true

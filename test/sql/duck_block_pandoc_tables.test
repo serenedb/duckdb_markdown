@@ -1,0 +1,76 @@
+# name: test/sql/duck_block_pandoc_tables.test
+# description: JSON-encoded tables in Pandoc's 2.10+ shape render their head and body rows, legacy tables with string or empty cells render, unreadable parts are skipped, and content that is no table comes out as written
+# group: [sql]
+
+require markdown
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'table', content: '[["",[],[]],[null,[]],[[{"t":"AlignDefault"},{"t":"ColWidthDefault"}],[{"t":"AlignDefault"},{"t":"ColWidthDefault"}]],[["",[],[]],[[["",[],[]],[[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"Name"}]}]],[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"Age"}]}]]]]]],[[["",[],[]],0,[],[[["",[],[]],[[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"Alice"}]}]],[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"30"}]}]]]],[["",[],[]],[[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"Bob"}]}]],[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"25"}]}]]]]]]],[["",[],[]],[]]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'| Name | Age |\n|---|---|\n| Alice | 30 |\n| Bob | 25 |\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'table', content: '[["",[],[]],[null,[]],[[{"t":"AlignDefault"},{"t":"ColWidthDefault"}]],[["",[],[]],[]],[[["",[],[]],0,[],[[["",[],[]],[[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"x"}]}]]]]]],[["",[],[]],0,[],[[["",[],[]],[[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"y"}]}]]]]]]],[["",[],[]],[]]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'| x |\n|---|\n| y |\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'table', content: '[["",[],[]],[null,[]],[[{"t":"AlignDefault"},{"t":"ColWidthDefault"}],[{"t":"AlignDefault"},{"t":"ColWidthDefault"}]],[["",[],[]],["not a row",[["",[],[]]],[["",[],[]],"not cells"],[["",[],[]],[[{"t":"Plain","c":[{"t":"Str","c":"H"}]}],"I"]]]],["not a body",[["",[],[]],0,[]],[["",[],[]],0,[],"not rows"],[["",[],[]],0,[],["not a row",[["",[],[]]],[["",[],[]],"not cells"],[["",[],[]],[[{"t":"Plain","c":[{"t":"Str","c":"v"}]}],"w"]]]]],[["",[],[]],[]]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'| H | I |\n|---|---|\n| v | w |\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'table', content: '[["",[],[]],[null,[]],[[{"t":"AlignDefault"},{"t":"ColWidthDefault"}]],[["",[],[]],[[["",[],[]],[[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"headers"}]}]]]]]],[[["",[],[]],0,[],[[["",[],[]],[[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"v"}]}]]]]]]],[["",[],[]],[]]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'| headers |\n|---|\n| v |\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'table', content: '[[],[{"t":"AlignDefault"}],[0],["A"],[["a"]]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'| A |\n|---|\n| a |\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'table', content: '[[],[{"t":"AlignDefault"},{"t":"AlignDefault"}],[0,0],[[{"t":"Plain","c":[{"t":"Str","c":"A"}]}],[{"t":"Plain","c":[{"t":"Str","c":"B"}]}]],[[[],[{"t":"Plain","c":[{"t":"Str","c":"b"}]}]]]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'| A | B |\n|---|---|\n|  | b |\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'table', content: '[[],[{"t":"AlignDefault"}],[0],[[{"t":"Plain","c":[{"t":"Str","c":"A"}]}]],[[]]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'| A |\n|---|\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'table', content: '[[],[{"t":"AlignDefault"}],[0],[[{"t":"Plain","c":[{"t":"Str","c":"A"}]}]],["x"]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'| A |\n|---|\n\n';
+----
+true
+
+query I
+SELECT coalesce(list(id ORDER BY id), [])
+FROM (VALUES
+    (1, 'not json'),
+    (2, '{"headers": ["A"], "rows": [["a"]]'),
+    (3, '{"rows": [["a"]]}'),
+    (4, '{"headers": "A", "rows": [["a"]]}'),
+    (5, '{"rows": [["a"]], "note": "headers"}'),
+    (6, '[[],"left",[0],[],[]]'),
+    (7, '[[],[],[],[],[]]'),
+    (8, '[[],[{}],[0],[],[]]'),
+    (9, '[[],[{"t":1}],[0],[],[]]'),
+    (10, '[[],[{"t":"Para"}],[0],[],[]]'),
+    (11, '[["",[],[]],[null,[]],{},[],[],[]]'),
+    (12, '[[],[{"t":"AlignDefault"}],[0],"no headers","no rows"]'),
+    (13, '[["",[],[]],[null,[]],[],"no head","no bodies",[["",[],[]],[]]]'),
+    (14, '[["",[],[]],[null,[]],[],[["",[],[]]],[],[["",[],[]],[]]]'),
+    (15, '[["",[],[]],[null,[]],[],[["",[],[]],"no rows"],[],[["",[],[]],[]]]')
+) t(id, c)
+WHERE duck_block_to_md({kind: 'block', element_type: 'table', content: c, level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0}) <> c || E'\n\n';
+----
+[]
