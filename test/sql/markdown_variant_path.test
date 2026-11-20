@@ -19,3 +19,8 @@ query I
 SELECT count(*) > 0 FROM read_markdown_blocks('test/markdown/simple.md'::VARIANT);
 ----
 true
+
+statement error
+SELECT * FROM read_markdown_sections(42::VARIANT);
+----
+Path must be a string or list of strings
