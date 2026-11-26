@@ -648,16 +648,12 @@ static unique_ptr<FunctionData> MarkdownBind(ClientContext &context, TableFuncti
 		}
 	}
 
-	vector<Value> files;
-	for (auto &file : MarkdownReader::GetFiles(context, paths, options.ignore_errors)) {
-		files.emplace_back(file);
-	}
+	auto files = MarkdownReader::GetFiles(context, paths, options.ignore_errors);
 	if (files.empty()) {
 		MarkdownSchema(KIND, options, return_types, names);
 	}
-	input.inputs[0] = Value::LIST(LogicalType::VARCHAR, std::move(files));
-	return TableFunctionMultiFileWrapper::MultiFileBindWith(context, input, return_types, names,
-	                                                        MarkdownFileFunction(KIND), MarkdownFileSettings());
+	return TableFunctionMultiFileWrapper::MultiFileBindWith(
+	    context, input, return_types, names, MarkdownFileFunction(KIND), MarkdownFileSettings(), std::move(files));
 }
 
 //===--------------------------------------------------------------------===//

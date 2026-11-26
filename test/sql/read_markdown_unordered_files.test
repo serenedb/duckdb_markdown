@@ -1,0 +1,39 @@
+# name: test/sql/read_markdown_unordered_files.test
+# description: Many files read with and without insertion order: every file is read once, each row with its own file's name
+# group: [sql]
+
+require markdown
+
+statement ok
+SET threads = 8;
+
+loop f 0 64
+
+statement ok
+COPY (SELECT E'# Doc {f}\n\ntext {f}\n' AS md) TO '{TEST_DIR}/claims_{f}.md' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+endloop
+
+foreach order true false
+
+statement ok
+SET preserve_insertion_order = {order};
+
+query III
+SELECT count(*), count(DISTINCT filename), count(*) FILTER (WHERE NOT starts_with(content, '# Doc ' || regexp_extract(filename, 'claims_(\d+)\.md', 1) || E'\n'))
+FROM read_markdown('{TEST_DIR}/claims_*.md', filename := true);
+----
+64	64	0
+
+query II
+SELECT count(*), count(*) FILTER (WHERE title != 'Doc ' || regexp_extract(filename, 'claims_(\d+)\.md', 1))
+FROM read_markdown_sections('{TEST_DIR}/claims_*.md', filename := true);
+----
+64	0
+
+query II
+SELECT count(*), count(DISTINCT filename) FROM read_markdown_blocks('{TEST_DIR}/claims_*.md', filename := true) WHERE element_type = 'heading';
+----
+64	64
+
+endloop

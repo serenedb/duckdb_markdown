@@ -75,15 +75,26 @@ static bool IsMarkdownFileName(const string &path) {
 // File Path Resolution
 //===--------------------------------------------------------------------===//
 
-vector<string> MarkdownReader::GetFiles(ClientContext &context, const Value &path_value, bool ignore_errors) {
+static string ListedType(const OpenFileInfo &file) {
+	string type;
+	if (file.extended_info) {
+		file.extended_info->TryGetOption("type", type);
+	}
+	return type;
+}
+
+vector<OpenFileInfo> MarkdownReader::GetFiles(ClientContext &context, const Value &path_value, bool ignore_errors) {
 	auto &fs = FileSystem::GetFileSystem(context);
-	vector<string> result;
+	vector<OpenFileInfo> result;
 
 	// Helper lambda to handle individual file paths
 	auto processPath = [&](const string &markdown_path) {
 		// First: check if we're dealing with just a single file that exists
 		if (fs.FileExists(markdown_path)) {
-			result.push_back(markdown_path);
+			OpenFileInfo file(markdown_path);
+			file.extended_info = make_shared_ptr<ExtendedOpenFileInfo>();
+			file.extended_info->options.emplace("type", Value("file"));
+			result.push_back(std::move(file));
 			return;
 		}
 
@@ -143,28 +154,32 @@ vector<string> MarkdownReader::GetFiles(ClientContext &context, const Value &pat
 		throw InvalidInputException("Path must be a string or list of strings");
 	}
 
-	// Filter for markdown files and validate existence
-	vector<string> markdown_files;
+	vector<OpenFileInfo> markdown_files;
 
-	for (const auto &file : result) {
+	for (auto &file : result) {
 		// Check if the file names a markdown file (tolerating VFS decoration)
-		if (IsMarkdownFileName(file)) {
-			try {
-				if (fs.FileExists(file)) {
-					markdown_files.push_back(file);
-				} else if (!ignore_errors) {
-					throw InvalidInputException("File does not exist: %s", file);
-				} else {
-					context.WarnUser(StringUtil::Format("Skipped %s, it does not exist", file));
-				}
-			} catch (const NotImplementedException &) {
-				// File system doesn't support file existence checking, assume it exists
-				markdown_files.push_back(file);
+		if (!IsMarkdownFileName(file.path)) {
+			if (!ignore_errors) {
+				throw InvalidInputException("File is not a markdown file: %s", file.path);
 			}
-		} else if (!ignore_errors) {
-			throw InvalidInputException("File is not a markdown file: %s", file);
-		} else {
-			context.WarnUser(StringUtil::Format("Skipped %s, it is not a markdown file", file));
+			context.WarnUser(StringUtil::Format("Skipped %s, it is not a markdown file", file.path));
+			continue;
+		}
+		if (!ListedType(file).empty()) {
+			markdown_files.push_back(std::move(file));
+			continue;
+		}
+		try {
+			if (fs.FileExists(file.path)) {
+				markdown_files.push_back(std::move(file));
+			} else if (!ignore_errors) {
+				throw InvalidInputException("File does not exist: %s", file.path);
+			} else {
+				context.WarnUser(StringUtil::Format("Skipped %s, it does not exist", file.path));
+			}
+		} catch (const NotImplementedException &) {
+			// File system doesn't support file existence checking, assume it exists
+			markdown_files.push_back(std::move(file));
 		}
 	}
 
@@ -178,11 +193,9 @@ vector<string> MarkdownReader::GetFiles(ClientContext &context, const Value &pat
 // Glob File Handling
 //===--------------------------------------------------------------------===//
 
-vector<string> MarkdownReader::GetGlobFiles(ClientContext &context, const string &pattern) {
+vector<OpenFileInfo> MarkdownReader::GetGlobFiles(ClientContext &context, const string &pattern) {
 	auto &fs = FileSystem::GetFileSystem(context);
-	vector<string> result;
-	bool supports_directory_exists;
-	bool is_directory;
+	vector<OpenFileInfo> result;
 
 	// Don't bother if we can't identify a glob pattern
 	try {
@@ -193,30 +206,20 @@ vector<string> MarkdownReader::GetGlobFiles(ClientContext &context, const string
 		return result;
 	}
 
-	// Check this once up-front and save the FS feature
-	try {
-		is_directory = fs.DirectoryExists(pattern);
-		supports_directory_exists = true;
-	} catch (const NotImplementedException &) {
-		is_directory = false;
-		supports_directory_exists = false;
-	}
-
 	// Given a glob path, add any file results (ignoring directories)
+	bool supports_directory_exists = true;
 	try {
 		for (auto &file : fs.Glob(pattern)) {
-			if (!supports_directory_exists) {
-				// If we can't check for directories, just add it
-				result.push_back(file.path);
-			} else {
+			auto type = ListedType(file);
+			if (type.empty() && supports_directory_exists) {
 				try {
-					if (!fs.DirectoryExists(file.path)) {
-						result.push_back(file.path);
-					}
+					type = fs.DirectoryExists(file.path) ? "directory" : "";
 				} catch (const NotImplementedException &) {
-					// Assume it's a file if we can't check
-					result.push_back(file.path);
+					supports_directory_exists = false;
 				}
+			}
+			if (type != "directory") {
+				result.push_back(std::move(file));
 			}
 		}
 	} catch (const NotImplementedException &) {

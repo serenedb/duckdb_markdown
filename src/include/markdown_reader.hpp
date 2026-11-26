@@ -118,18 +118,18 @@ public:
 	 * @param context Client context for file operations
 	 * @param path_value The input value containing file path(s)
 	 * @param ignore_errors Whether to ignore missing files
-	 * @return vector<string> List of resolved file paths
+	 * @return vector<OpenFileInfo> The resolved files, with what a listing knew of each
 	 */
-	static vector<string> GetFiles(ClientContext &context, const Value &path_value, bool ignore_errors);
+	static vector<OpenFileInfo> GetFiles(ClientContext &context, const Value &path_value, bool ignore_errors);
 
 	/**
 	 * @brief Get files from glob pattern with cross-filesystem support
 	 *
 	 * @param context Client context for file operations
 	 * @param pattern Glob pattern to match
-	 * @return vector<string> List of files matching the pattern
+	 * @return vector<OpenFileInfo> The files matching the pattern
 	 */
-	static vector<string> GetGlobFiles(ClientContext &context, const string &pattern);
+	static vector<OpenFileInfo> GetGlobFiles(ClientContext &context, const string &pattern);
 
 	/**
 	 * @brief Read a Markdown file and parse it
