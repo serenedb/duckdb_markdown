@@ -2279,17 +2279,19 @@ bool ValidateInternalLink(const std::string &markdown_str, const std::string &li
 	return false;
 }
 
-std::string NormalizeMarkdown(const std::string &markdown_str) {
-	// Basic normalization - could be more sophisticated
-	std::string normalized = markdown_str;
-
-	// Normalize line endings using StringUtil
-	StringUtil::Replace(normalized, "\r\n", "\n");
-	StringUtil::Replace(normalized, "\r", "\n");
-
-	// Note: Skip trailing whitespace removal for now as it requires regex
-	// This can be implemented later if needed
-
+std::string NormalizeMarkdown(std::string_view markdown_str) {
+	std::string normalized;
+	normalized.reserve(markdown_str.size());
+	size_t begin = 0;
+	for (auto end = markdown_str.find('\r'); end != std::string_view::npos; end = markdown_str.find('\r', begin)) {
+		normalized.append(markdown_str.substr(begin, end - begin));
+		normalized.push_back('\n');
+		begin = end + 1;
+		if (begin < markdown_str.size() && markdown_str[begin] == '\n') {
+			begin++;
+		}
+	}
+	normalized.append(markdown_str.substr(begin));
 	return normalized;
 }
 

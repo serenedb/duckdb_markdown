@@ -270,7 +270,7 @@ std::string GenerateBreadcrumb(const std::string &markdown_content, const std::s
 bool ValidateInternalLink(const std::string &markdown_str, const std::string &link_target);
 
 // Normalize Markdown content
-std::string NormalizeMarkdown(const std::string &markdown_str);
+std::string NormalizeMarkdown(std::string_view markdown_str);
 
 } // namespace markdown_utils
 
