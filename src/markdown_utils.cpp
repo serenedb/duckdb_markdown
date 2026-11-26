@@ -805,6 +805,28 @@ std::vector<CodeBlock> ExtractCodeBlocks(const std::string &markdown_str_in, con
 	return code_blocks;
 }
 
+static std::vector<size_t> LineStarts(std::string_view text) {
+	std::vector<size_t> starts {0};
+	for (size_t i = 0; i < text.size(); i++) {
+		if (text[i] == '\n' || (text[i] == '\r' && (i + 1 == text.size() || text[i + 1] != '\n'))) {
+			starts.push_back(i + 1);
+		}
+	}
+	return starts;
+}
+
+static std::string SourceSpan(std::string_view text, const std::vector<size_t> &line_starts, cmark_node *first,
+                              cmark_node *last) {
+	const auto begin_line = static_cast<size_t>(cmark_node_get_start_line(first));
+	const auto end_line = static_cast<size_t>(cmark_node_get_end_line(last));
+	if (begin_line == 0 || begin_line > line_starts.size() || end_line < begin_line) {
+		return std::string();
+	}
+	const size_t begin = line_starts[begin_line - 1];
+	const size_t end = end_line < line_starts.size() ? line_starts[end_line] : text.size();
+	return std::string(text.substr(begin, end - begin));
+}
+
 std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int32_t min_level, int32_t max_level,
                                              bool include_content, const std::string &content_mode,
                                              idx_t max_content_length) {
@@ -853,6 +875,7 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 		throw std::runtime_error("Failed to parse markdown document");
 	}
 
+	const std::vector<size_t> line_starts = include_content ? LineStarts(content) : std::vector<size_t>();
 	std::vector<cmark_node *> heading_nodes;
 	std::vector<int32_t> heading_levels; // Track levels for all headings
 
@@ -961,52 +984,35 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 			}
 		}
 
-		// Extract content if requested
 		if (include_content) {
-			// Extract content by walking through nodes
-			std::string content_text;
-			std::string immediate_content; // Content before first subsection (for smart mode)
-			std::vector<std::pair<std::string, idx_t>> subsection_refs; // (id, line_count) for smart mode
+			cmark_node *first = cmark_node_next(heading);
+			cmark_node *last = nullptr;
+			cmark_node *last_immediate = nullptr;
 			bool found_subsection = false;
-			cmark_node *current = cmark_node_next(heading);
-
-			while (current) {
-				cmark_node_type node_type = cmark_node_get_type(current);
-
-				// Check stopping conditions based on mode
-				if (node_type == CMARK_NODE_HEADING) {
-					int32_t current_level = cmark_node_get_heading_level(current);
-
-					if (content_mode == "minimal") {
-						// Stop at any heading
+			for (cmark_node *current = first; current; current = cmark_node_next(current)) {
+				if (cmark_node_get_type(current) == CMARK_NODE_HEADING) {
+					const int32_t current_level = cmark_node_get_heading_level(current);
+					if (content_mode == "minimal" || current_level <= section.level) {
 						break;
-					} else if (current_level <= section.level) {
-						// Stop at same-or-higher level for full/smart
-						break;
-					} else if (content_mode == "smart" && !found_subsection) {
-						// First subsection in smart mode - save immediate content
-						immediate_content = content_text;
+					}
+					if (content_mode == "smart" && !found_subsection) {
+						last_immediate = last;
 						found_subsection = true;
 					}
 				}
-
 				if (current == stop_node) {
 					break;
 				}
-
-				// Convert this node back to markdown text
-				const CmarkText rendered {cmark_render_commonmark(current, CMARK_OPT_DEFAULT, 0)};
-				if (rendered) {
-					content_text += rendered.get();
-				}
-
-				current = cmark_node_next(current);
+				last = current;
 			}
+			std::string content_text = last ? SourceSpan(content, line_starts, first, last) : std::string();
 
 			// Apply smart mode truncation if needed
 			if (content_mode == "smart" && content_text.length() > effective_max_length) {
 				// Build smart content with subsection references
 				std::string smart_content;
+				const std::string immediate_content =
+				    last_immediate ? SourceSpan(content, line_starts, first, last_immediate) : std::string();
 
 				if (!immediate_content.empty()) {
 					smart_content = immediate_content;
@@ -1045,9 +1051,9 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 					}
 				}
 
-				section.content = smart_content;
+				section.content = std::move(smart_content);
 			} else {
-				section.content = content_text;
+				section.content = std::move(content_text);
 			}
 		}
 

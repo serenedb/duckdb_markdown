@@ -336,16 +336,11 @@ SELECT len(md_extract_wikilinks('```' || chr(10) || '[[InFence]]' || chr(10) || 
 ----
 1
 
-# Per-section / per-block extraction can't see ``` fence markers, because cmark strips
-# them from its plaintext content. So a #tag inside a fenced code block in a section
-# WILL be extracted — unlike per-file `read_markdown`, which sees raw bytes incl. fences.
-# Tasks section in the fixture: 1 fenced `#notag-in-fence` + 1 trailing `#realtag` → 2 tags.
-# (Per-file the same file yields 3 tags total: planning, q2/goals, realtag — fence honored.)
 query I
 SELECT len(tags) FROM read_markdown_sections('test/data/wikilinks_tags_sample.md',
   extract_extensions := 'tags') WHERE title = 'Tasks';
 ----
-2
+1
 
 # extract_extensions splits ONLY on commas (not whitespace), so a token containing an
 # internal space is rejected as unknown — matching the existing `flavor` strictness.

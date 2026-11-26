@@ -26,7 +26,7 @@ true
 query II
 SELECT title, replace(content, chr(10), '|') FROM read_markdown_sections('{TEST_DIR}/line_endings.md');
 ----
-Title	Some *text* here.|more|
+Title	Some *text* here.||more|
 
 statement ok
 COPY (SELECT E'# Title\r\rend' AS md)

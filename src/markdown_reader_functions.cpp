@@ -65,12 +65,6 @@ static LogicalType TagStructType() {
 	return LogicalType::STRUCT(fields);
 }
 
-// Strip backslash-escapes from the inline characters our regex matches on
-// (`[`, `]`, `#`, `^`, `|`, `!`). `ExtractSections` / block extraction routes
-// per-row content through cmark's plaintext rendering, which escapes markdown
-// special characters — so `[[Meeting^abc]]` arrives as `\[\[Meeting\^abc\]\]`
-// and the wikilink regex won't match. Per-file content (read_markdown's raw
-// file bytes) has no escapes, so this is idempotent there.
 static std::string UnescapeMarkdownInline(std::string_view in) {
 	std::string out;
 	out.reserve(in.size());
