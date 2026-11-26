@@ -825,7 +825,6 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 	struct CMarkRAII {
 		cmark_parser *parser = nullptr;
 		cmark_node *doc = nullptr;
-		cmark_iter *iter = nullptr;
 
 		CMarkRAII() {
 			parser = cmark_parser_new(CMARK_OPT_DEFAULT);
@@ -834,8 +833,6 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 		}
 
 		~CMarkRAII() {
-			if (iter)
-				cmark_iter_free(iter);
 			if (doc)
 				cmark_node_free(doc);
 			if (parser)
@@ -856,26 +853,32 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 		throw std::runtime_error("Failed to parse markdown document");
 	}
 
-	// Walk the AST looking for heading nodes
-	cmark.iter = cmark_iter_new(cmark.doc);
-	if (!cmark.iter) {
-		throw std::runtime_error("Failed to create cmark iterator");
-	}
-
-	cmark_event_type ev_type;
 	std::vector<cmark_node *> heading_nodes;
 	std::vector<int32_t> heading_levels; // Track levels for all headings
 
 	// First pass: collect all heading nodes (including those outside min/max range for reference)
-	while ((ev_type = cmark_iter_next(cmark.iter)) != CMARK_EVENT_DONE) {
-		cmark_node *cur = cmark_iter_get_node(cmark.iter);
-
-		if (ev_type == CMARK_EVENT_ENTER && cmark_node_get_type(cur) == CMARK_NODE_HEADING) {
-			int32_t level = cmark_node_get_heading_level(cur);
-			heading_nodes.push_back(cur);
-			heading_levels.push_back(level);
+	cmark_node *node = cmark_node_first_child(cmark.doc);
+	while (node) {
+		cmark_node *child = nullptr;
+		if (cmark_node_get_type(node) == CMARK_NODE_HEADING) {
+			heading_nodes.push_back(node);
+			heading_levels.push_back(cmark_node_get_heading_level(node));
+		} else {
+			child = cmark_node_first_child(node);
+			if (child && (cmark_node_get_type(child) & CMARK_NODE_TYPE_MASK) != CMARK_NODE_TYPE_BLOCK) {
+				child = nullptr;
+			}
 		}
+		if (child) {
+			node = child;
+			continue;
+		}
+		while (node != cmark.doc && !cmark_node_next(node)) {
+			node = cmark_node_parent(node);
+		}
+		node = node == cmark.doc ? nullptr : cmark_node_next(node);
 	}
+	std::vector<size_t> open_sections;
 
 	// Second pass: process headings and extract content
 	for (size_t i = 0; i < heading_nodes.size(); ++i) {
@@ -914,14 +917,15 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 		section.id = id_counts[base_id] > 1 ? base_id + "-" + std::to_string(id_counts[base_id] - 1) : base_id;
 
 		// Find parent section and build section path
+		while (!open_sections.empty() && sections[open_sections.back()].level >= section.level) {
+			open_sections.pop_back();
+		}
 		section.parent_id = "";
 		section.section_path = section.id;
-		for (int j = static_cast<int>(sections.size()) - 1; j >= 0; --j) {
-			if (sections[j].level < section.level) {
-				section.parent_id = sections[j].id;
-				section.section_path = sections[j].section_path + "/" + section.id;
-				break;
-			}
+		if (!open_sections.empty()) {
+			const auto &parent = sections[open_sections.back()];
+			section.parent_id = parent.id;
+			section.section_path = parent.section_path + "/" + section.id;
 		}
 
 		// Find the stopping point based on content_mode (needed for end_line and content extraction)
@@ -1047,7 +1051,8 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 			}
 		}
 
-		sections.push_back(section);
+		sections.push_back(std::move(section));
+		open_sections.push_back(sections.size() - 1);
 	}
 
 	return sections;
