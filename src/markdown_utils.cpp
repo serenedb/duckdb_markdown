@@ -396,14 +396,14 @@ std::string MarkdownToText(const std::string &markdown_str) {
 	return result;
 }
 
-MarkdownMetadata ExtractMetadata(const std::string &markdown_str) {
+MarkdownMetadata ExtractMetadata(std::string_view markdown_str) {
 	MarkdownMetadata metadata;
 
 	// Locate a leading YAML-style frontmatter block with a linear scanner
 	// (see FindFrontmatter) instead of a backtracking std::regex.
 	auto fm = FindFrontmatter(markdown_str);
 	if (fm.found) {
-		std::string fm_content = markdown_str.substr(fm.body_start, fm.body_len);
+		std::string fm_content(markdown_str.substr(fm.body_start, fm.body_len));
 
 		// Line-split key/value, NOT a parser -- see README. The separator follows
 		// the fence: YAML writes `key: value`, TOML writes `key = value`. Splitting
@@ -436,11 +436,11 @@ MarkdownMetadata ExtractMetadata(const std::string &markdown_str) {
 	return metadata;
 }
 
-std::string ExtractRawFrontmatter(const std::string &markdown_str) {
+std::string ExtractRawFrontmatter(std::string_view markdown_str) {
 	// Linear scan (see FindFrontmatter) instead of a backtracking std::regex.
 	auto fm = FindFrontmatter(markdown_str);
 	if (fm.found) {
-		return markdown_str.substr(fm.body_start, fm.body_len);
+		return std::string(markdown_str.substr(fm.body_start, fm.body_len));
 	}
 	return "";
 }
@@ -532,12 +532,12 @@ static void CountStructuralNodes(std::string_view markdown_str, MarkdownStats &s
 	}
 }
 
-MarkdownStats CalculateStats(const std::string &markdown_str_in, bool exact) {
+MarkdownStats CalculateStats(std::string_view markdown_str_in, bool exact) {
 	MarkdownStats stats = {};
 
 	// Skip a leading BOM before counting anything: it is an encoding marker,
 	// not a character of the document, and cmark does not see it either (#21).
-	const std::string_view after_bom = std::string_view(markdown_str_in).substr(SkipBOM(markdown_str_in));
+	const std::string_view after_bom = markdown_str_in.substr(SkipBOM(markdown_str_in));
 
 	// #58: frontmatter is document METADATA, not body prose. Counting it made
 	// word_count/char_count/line_count -- and reading_time_minutes, derived from
@@ -1527,7 +1527,7 @@ static void EmitBlockChildren(cmark_node *container, int level, int32_t &order, 
 	}
 }
 
-std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool structured_inlines) {
+std::vector<MarkdownBlock> ParseBlocks(std::string_view markdown_str, bool structured_inlines) {
 	std::vector<MarkdownBlock> blocks;
 
 	if (markdown_str.empty()) {
@@ -1554,7 +1554,8 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 	// this replaced -- it would hand a consumer bytes that parse cleanly as the
 	// wrong format rather than failing loudly.
 	auto fm_match = FindFrontmatter(markdown_str);
-	std::string frontmatter = fm_match.found ? markdown_str.substr(fm_match.body_start, fm_match.body_len) : "";
+	std::string frontmatter(fm_match.found ? markdown_str.substr(fm_match.body_start, fm_match.body_len)
+	                                       : std::string_view());
 	if (!frontmatter.empty()) {
 		// LEVEL 1, ruled by duck_block_utils at 2771e9e (they coordinate the spec;
 		// Teague routed the question there). `level` is depth, and 1 means NOT

@@ -5,6 +5,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/formats/row_input.hpp"
 #include "duckdb/function/replacement_scan.hpp"
 #include "duckdb/main/error_manager.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
@@ -233,8 +234,20 @@ vector<OpenFileInfo> MarkdownReader::GetGlobFiles(ClientContext &context, const 
 // File Reading
 //===--------------------------------------------------------------------===//
 
-string MarkdownReader::ReadMarkdownFile(ClientContext &context, const string &file_path,
-                                        const MarkdownReadOptions &options) {
+namespace {
+
+class NormalizedMarkdown : public RowBuffer {
+public:
+	explicit NormalizedMarkdown(string text_p) : text(std::move(text_p)) {
+	}
+
+	const string text;
+};
+
+} // namespace
+
+MarkdownReader::MarkdownText MarkdownReader::ReadMarkdownFile(ClientContext &context, const string &file_path,
+                                                              const MarkdownReadOptions &options) {
 	auto &fs = FileSystem::GetFileSystem(context);
 
 	// Read file content
@@ -264,28 +277,28 @@ string MarkdownReader::ReadMarkdownFile(ClientContext &context, const string &fi
 		}
 	}
 
-	string content;
-	content.resize(file_size);
-
-	fs.Read(*file_handle, reinterpret_cast<void *>(content.data()), file_size);
+	auto file = WholeFile::Read(context, *file_handle);
+	const std::string_view content(file->data, file->size);
 	if (!Value::StringIsValid(content.data(), content.size())) {
-		throw ErrorManager::InvalidUnicodeError(content, "markdown file");
+		throw ErrorManager::InvalidUnicodeError(string(content), "markdown file");
 	}
 
 	// Normalize content if requested
-	if (options.normalize_content) {
-		content = markdown_utils::NormalizeMarkdown(content);
+	if (options.normalize_content && content.find('\r') != std::string_view::npos) {
+		auto normalized = make_shared_ptr<NormalizedMarkdown>(markdown_utils::NormalizeMarkdown(content));
+		const std::string_view text = normalized->text;
+		return {std::move(normalized), text};
 	}
 
-	return content;
+	return {std::move(file), content};
 }
 
 //===--------------------------------------------------------------------===//
 // Section Processing
 //===--------------------------------------------------------------------===//
 
-vector<markdown_utils::MarkdownSection> MarkdownReader::ProcessSections(const string &content,
-                                                                        const MarkdownReadOptions &options) {
+vector<markdown_utils::MarkdownSection>
+MarkdownReader::ProcessSections(std::string_view content, const MarkdownReadOptions &options, bool include_content) {
 	// Strip frontmatter before parsing - cmark-gfm doesn't understand YAML frontmatter
 	// and will incorrectly interpret --- as setext heading underlines
 	const std::string_view body = markdown_utils::StripFrontmatter(content);
@@ -294,7 +307,7 @@ vector<markdown_utils::MarkdownSection> MarkdownReader::ProcessSections(const st
 	// max_depth is relative to min_level (depth 1 = only min_level headings)
 	int32_t effective_max_level = std::min(options.max_level, options.min_level + options.max_depth - 1);
 
-	return markdown_utils::ParseSections(body, options.min_level, effective_max_level, options.include_content,
+	return markdown_utils::ParseSections(body, options.min_level, effective_max_level, include_content,
 	                                     options.content_mode, options.max_content_length);
 }
 

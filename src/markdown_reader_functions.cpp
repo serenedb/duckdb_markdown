@@ -18,20 +18,27 @@ enum class MarkdownReadKind : uint8_t { DOCUMENTS, SECTIONS, BLOCKS };
 struct MarkdownFileBindData : public TableFunctionData {
 	MarkdownReader::MarkdownReadOptions options;
 	string file;
-	vector<LogicalType> types;
+	vector<string> names;
 };
 
 struct MarkdownFileGlobalState : public GlobalTableFunctionState {
 	bool loaded = false;
-	string content;
+	MarkdownReader::MarkdownText content;
 	vector<markdown_utils::MarkdownSection> sections;
 	vector<markdown_utils::MarkdownBlock> blocks;
 	idx_t rows = 0;
 	idx_t position = 0;
-	bool projected = false;
-	vector<column_t> column_ids;
-	DataChunk all_columns;
+	vector<optional_idx> outputs;
+	bool renders_content = false;
 };
+
+static optional_ptr<Vector> Projected(const MarkdownFileGlobalState &state, DataChunk &output, idx_t column) {
+	const auto output_idx = state.outputs[column];
+	if (!output_idx.IsValid()) {
+		return nullptr;
+	}
+	return &output.data[output_idx.GetIndex()];
+}
 
 //===--------------------------------------------------------------------===//
 // Optional add-on extractor columns (extract_extensions param)
@@ -64,7 +71,7 @@ static LogicalType TagStructType() {
 // special characters — so `[[Meeting^abc]]` arrives as `\[\[Meeting\^abc\]\]`
 // and the wikilink regex won't match. Per-file content (read_markdown's raw
 // file bytes) has no escapes, so this is idempotent there.
-static std::string UnescapeMarkdownInline(const std::string &in) {
+static std::string UnescapeMarkdownInline(std::string_view in) {
 	std::string out;
 	out.reserve(in.size());
 	for (size_t i = 0; i < in.size(); i++) {
@@ -82,12 +89,12 @@ static std::string UnescapeMarkdownInline(const std::string &in) {
 	return out;
 }
 
-static void WriteWikilinks(Vector &result, idx_t row, const std::string &content) {
+static void WriteWikilinks(Vector &result, idx_t row, std::string_view content) {
 	markdown_writer::WriteStructList(result, row, markdown_utils::ExtractWikilinks(UnescapeMarkdownInline(content)),
 	                                 markdown_writer::WriteWikilink);
 }
 
-static void WriteTags(Vector &result, idx_t row, const std::string &content) {
+static void WriteTags(Vector &result, idx_t row, std::string_view content) {
 	markdown_writer::WriteStructList(result, row, markdown_utils::ExtractTags(UnescapeMarkdownInline(content)),
 	                                 markdown_writer::WriteTag);
 }
@@ -323,7 +330,9 @@ static unique_ptr<FunctionData> MarkdownFileBind(ClientContext &context, TableFu
 	ParseMarkdownOptions(input.named_parameters, result->options);
 	result->file = TableFunctionFileBindInput::GetFile(input).path;
 	MarkdownSchema(KIND, result->options, return_types, names);
-	result->types = return_types;
+	for (auto &name : names) {
+		result->names.push_back(CompatNameStr(name));
+	}
 	return std::move(result);
 }
 
@@ -331,14 +340,14 @@ static unique_ptr<GlobalTableFunctionState> MarkdownFileInitGlobal(ClientContext
                                                                    TableFunctionInitInput &input) {
 	auto &bind = input.bind_data->Cast<MarkdownFileBindData>();
 	auto result = make_uniq<MarkdownFileGlobalState>();
-	bool identity = input.column_ids.size() == bind.types.size();
-	for (idx_t i = 0; identity && i < input.column_ids.size(); i++) {
-		identity = input.column_ids[i] == i;
-	}
-	if (!identity) {
-		result->projected = true;
-		result->column_ids = input.column_ids;
-		result->all_columns.Initialize(BufferAllocator::Get(context), bind.types);
+	result->outputs.resize(bind.names.size());
+	for (idx_t i = 0; i < input.column_ids.size(); i++) {
+		const auto column_id = input.column_ids[i];
+		result->outputs[column_id] = i;
+		const auto &name = bind.names[column_id];
+		if (name == "content" || name == "wikilinks" || name == "tags") {
+			result->renders_content = true;
+		}
 	}
 	return std::move(result);
 }
@@ -348,10 +357,10 @@ static void LoadMarkdownFile(ClientContext &context, const MarkdownFileBindData 
 	const auto &options = bind.options;
 	const auto &file_path = bind.file;
 	try {
-		string content = MarkdownReader::ReadMarkdownFile(context, file_path, options);
+		state.content = MarkdownReader::ReadMarkdownFile(context, file_path, options);
+		const auto content = state.content.text;
 		switch (KIND) {
 		case MarkdownReadKind::DOCUMENTS:
-			state.content = std::move(content);
 			state.rows = 1;
 			break;
 		case MarkdownReadKind::SECTIONS: {
@@ -374,7 +383,8 @@ static void LoadMarkdownFile(ClientContext &context, const MarkdownFileBindData 
 					state.sections.push_back(fm_section);
 				}
 			}
-			for (auto &section : MarkdownReader::ProcessSections(content, options)) {
+			for (auto &section :
+			     MarkdownReader::ProcessSections(content, options, options.include_content && state.renders_content)) {
 				if (SectionMatchesFilter(section.id, section.section_path, options.section_filter)) {
 					state.sections.push_back(std::move(section));
 				}
@@ -401,80 +411,144 @@ static void LoadMarkdownFile(ClientContext &context, const MarkdownFileBindData 
 	}
 }
 
-static void WriteDocumentRow(const MarkdownFileBindData &bind, MarkdownFileGlobalState &state, DataChunk &output,
+static void WriteDocumentRow(const MarkdownFileBindData &bind, const MarkdownFileGlobalState &state, DataChunk &output,
                              idx_t output_idx) {
 	const auto &options = bind.options;
-	const auto &content = state.content;
+	const auto content = state.content.text;
 	idx_t column_idx = 0;
-	markdown_writer::WriteString(output.data[column_idx++], output_idx, content);
+	auto next = [&]() {
+		return Projected(state, output, column_idx++);
+	};
+	if (auto target = next()) {
+		CompatFlatDataMutable<string_t>(*target)[output_idx] =
+		    string_t(content.data(), NumericCast<uint32_t>(content.size()));
+		StringVector::AddAuxiliaryData(*target, make_uniq<RowBufferHolder>(state.content.owner));
+	}
 	if (options.extract_metadata) {
-		markdown_writer::WriteStringMap(output.data[column_idx++], output_idx,
-		                                markdown_utils::ExtractMetadata(content).custom_fields);
+		if (auto target = next()) {
+			markdown_writer::WriteStringMap(*target, output_idx,
+			                                markdown_utils::ExtractMetadata(content).custom_fields);
+		}
 	}
 	if (options.include_stats) {
-		markdown_writer::WriteStats(output.data[column_idx++], output_idx, markdown_utils::CalculateStats(content));
+		if (auto target = next()) {
+			markdown_writer::WriteStats(*target, output_idx, markdown_utils::CalculateStats(content));
+		}
 	}
 	if (options.include_filepath) {
-		markdown_writer::WriteCheckedString(output.data[column_idx++], output_idx, bind.file);
+		if (auto target = next()) {
+			markdown_writer::WriteCheckedString(*target, output_idx, bind.file);
+		}
 	}
 	if (options.extract_wikilinks) {
-		WriteWikilinks(output.data[column_idx++], output_idx, content);
+		if (auto target = next()) {
+			WriteWikilinks(*target, output_idx, content);
+		}
 	}
 	if (options.extract_tags) {
-		WriteTags(output.data[column_idx++], output_idx, content);
+		if (auto target = next()) {
+			WriteTags(*target, output_idx, content);
+		}
 	}
 }
 
-static void WriteSectionRow(const MarkdownFileBindData &bind, const markdown_utils::MarkdownSection &section,
-                            DataChunk &output, idx_t output_idx) {
+static void WriteSectionRow(const MarkdownFileBindData &bind, const MarkdownFileGlobalState &state,
+                            const markdown_utils::MarkdownSection &section, DataChunk &output, idx_t output_idx) {
 	const auto &options = bind.options;
 	idx_t column_idx = 0;
-	markdown_writer::WriteString(output.data[column_idx++], output_idx, section.id);
-	markdown_writer::WriteString(output.data[column_idx++], output_idx, section.section_path);
-	markdown_writer::WriteNumber(output.data[column_idx++], output_idx, static_cast<int32_t>(section.level));
-	markdown_writer::WriteString(output.data[column_idx++], output_idx, section.title);
-	markdown_writer::WriteString(output.data[column_idx++], output_idx, section.content);
-	markdown_writer::WriteOptionalString(output.data[column_idx++], output_idx, section.parent_id);
-	markdown_writer::WriteNumber(output.data[column_idx++], output_idx, static_cast<int64_t>(section.start_line));
-	markdown_writer::WriteNumber(output.data[column_idx++], output_idx, static_cast<int64_t>(section.end_line));
+	auto next = [&]() {
+		return Projected(state, output, column_idx++);
+	};
+	if (auto target = next()) {
+		markdown_writer::WriteString(*target, output_idx, section.id);
+	}
+	if (auto target = next()) {
+		markdown_writer::WriteString(*target, output_idx, section.section_path);
+	}
+	if (auto target = next()) {
+		markdown_writer::WriteNumber(*target, output_idx, static_cast<int32_t>(section.level));
+	}
+	if (auto target = next()) {
+		markdown_writer::WriteString(*target, output_idx, section.title);
+	}
+	if (auto target = next()) {
+		markdown_writer::WriteString(*target, output_idx, section.content);
+	}
+	if (auto target = next()) {
+		markdown_writer::WriteOptionalString(*target, output_idx, section.parent_id);
+	}
+	if (auto target = next()) {
+		markdown_writer::WriteNumber(*target, output_idx, static_cast<int64_t>(section.start_line));
+	}
+	if (auto target = next()) {
+		markdown_writer::WriteNumber(*target, output_idx, static_cast<int64_t>(section.end_line));
+	}
 	if (options.include_filepath) {
-		markdown_writer::WriteCheckedString(output.data[column_idx++], output_idx, bind.file);
+		if (auto target = next()) {
+			markdown_writer::WriteCheckedString(*target, output_idx, bind.file);
+		}
 	}
 	if (options.extract_wikilinks) {
-		WriteWikilinks(output.data[column_idx++], output_idx, section.content);
+		if (auto target = next()) {
+			WriteWikilinks(*target, output_idx, section.content);
+		}
 	}
 	if (options.extract_tags) {
-		WriteTags(output.data[column_idx++], output_idx, section.content);
+		if (auto target = next()) {
+			WriteTags(*target, output_idx, section.content);
+		}
 	}
 }
 
-static void WriteBlockRow(const MarkdownFileBindData &bind, const markdown_utils::MarkdownBlock &block,
-                          DataChunk &output, idx_t output_idx) {
+static void WriteBlockRow(const MarkdownFileBindData &bind, const MarkdownFileGlobalState &state,
+                          const markdown_utils::MarkdownBlock &block, DataChunk &output, idx_t output_idx) {
 	const auto &options = bind.options;
 	idx_t column_idx = 0;
+	auto next = [&]() {
+		return Projected(state, output, column_idx++);
+	};
 	// kind ('block', or 'inline' for structured rich-text children)
-	markdown_writer::WriteString(output.data[column_idx++], output_idx, block.kind);
-	markdown_writer::WriteString(output.data[column_idx++], output_idx, block.block_type);
-	// content (NULL for containers whose text lives in structured inline children)
-	markdown_writer::WriteOptionalString(output.data[column_idx++], output_idx, block.content);
-	// level (NULL if -1, meaning "not applicable")
-	if (block.level >= 0) {
-		markdown_writer::WriteNumber(output.data[column_idx], output_idx, block.level);
-	} else {
-		markdown_writer::WriteNull(output.data[column_idx], output_idx);
+	if (auto target = next()) {
+		markdown_writer::WriteString(*target, output_idx, block.kind);
 	}
-	column_idx++;
-	markdown_writer::WriteString(output.data[column_idx++], output_idx, block.encoding);
-	markdown_writer::WriteStringMap(output.data[column_idx++], output_idx, block.attributes);
-	markdown_writer::WriteNumber(output.data[column_idx++], output_idx, block.block_order);
+	if (auto target = next()) {
+		markdown_writer::WriteString(*target, output_idx, block.block_type);
+	}
+	// content (NULL for containers whose text lives in structured inline children)
+	if (auto target = next()) {
+		markdown_writer::WriteOptionalString(*target, output_idx, block.content);
+	}
+	// level (NULL if -1, meaning "not applicable")
+	if (auto target = next()) {
+		if (block.level >= 0) {
+			markdown_writer::WriteNumber(*target, output_idx, block.level);
+		} else {
+			markdown_writer::WriteNull(*target, output_idx);
+		}
+	}
+	if (auto target = next()) {
+		markdown_writer::WriteString(*target, output_idx, block.encoding);
+	}
+	if (auto target = next()) {
+		markdown_writer::WriteStringMap(*target, output_idx, block.attributes);
+	}
+	if (auto target = next()) {
+		markdown_writer::WriteNumber(*target, output_idx, block.block_order);
+	}
 	if (options.include_filepath) {
-		markdown_writer::WriteCheckedString(output.data[column_idx++], output_idx, bind.file);
+		if (auto target = next()) {
+			markdown_writer::WriteCheckedString(*target, output_idx, bind.file);
+		}
 	}
 	if (options.extract_wikilinks) {
-		WriteWikilinks(output.data[column_idx++], output_idx, block.content);
+		if (auto target = next()) {
+			WriteWikilinks(*target, output_idx, block.content);
+		}
 	}
 	if (options.extract_tags) {
-		WriteTags(output.data[column_idx++], output_idx, block.content);
+		if (auto target = next()) {
+			WriteTags(*target, output_idx, block.content);
+		}
 	}
 }
 
@@ -486,35 +560,18 @@ static void MarkdownFileScan(ClientContext &context, TableFunctionInput &input, 
 		state.loaded = true;
 		LoadMarkdownFile<KIND>(context, bind, state);
 	}
-	const bool projected = state.projected;
-	auto &target = projected ? state.all_columns : output;
-	if (projected) {
-		target.Reset();
-	}
 	idx_t output_idx = 0;
 	for (; state.position < state.rows && output_idx < STANDARD_VECTOR_SIZE; state.position++, output_idx++) {
 		switch (KIND) {
 		case MarkdownReadKind::DOCUMENTS:
-			WriteDocumentRow(bind, state, target, output_idx);
+			WriteDocumentRow(bind, state, output, output_idx);
 			break;
 		case MarkdownReadKind::SECTIONS:
-			WriteSectionRow(bind, state.sections[state.position], target, output_idx);
+			WriteSectionRow(bind, state, state.sections[state.position], output, output_idx);
 			break;
 		case MarkdownReadKind::BLOCKS:
-			WriteBlockRow(bind, state.blocks[state.position], target, output_idx);
+			WriteBlockRow(bind, state, state.blocks[state.position], output, output_idx);
 			break;
-		}
-	}
-	target.SetChildCardinality(output_idx);
-	if (!projected) {
-		return;
-	}
-	for (idx_t i = 0; i < state.column_ids.size(); i++) {
-		const auto column_id = state.column_ids[i];
-		if (IsVirtualColumn(column_id)) {
-			output.data[i].Reference(Value(output.data[i].GetType()), count_t(output_idx));
-		} else {
-			output.data[i].Reference(target.data[column_id]);
 		}
 	}
 	output.SetChildCardinality(output_idx);

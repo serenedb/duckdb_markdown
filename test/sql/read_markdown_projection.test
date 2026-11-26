@@ -1,0 +1,37 @@
+# name: test/sql/read_markdown_projection.test
+# description: The readers write only the columns a query reads, whether the extractors whose columns it leaves out are on or not
+# group: [sql]
+
+require markdown
+
+statement ok
+COPY (SELECT E'# Title\n\nSee [[Other]] and #tag here.\n\n## Sub\n\nmore #tag2\n' AS md)
+TO '{TEST_DIR}/projection.md' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query II
+SELECT length(content), filename LIKE '%projection.md' FROM read_markdown('{TEST_DIR}/projection.md', extract_extensions = 'obsidian', filename = true);
+----
+59	true
+
+query II
+SELECT len(wikilinks), len(tags) FROM read_markdown('{TEST_DIR}/projection.md', extract_extensions = 'obsidian');
+----
+1	2
+
+query II
+SELECT title, level FROM read_markdown_sections('{TEST_DIR}/projection.md', extract_extensions = 'obsidian') ORDER BY start_line;
+----
+Title	1
+Sub	2
+
+query II
+SELECT title, len(tags) FROM read_markdown_sections('{TEST_DIR}/projection.md', extract_extensions = 'tags') ORDER BY start_line;
+----
+Title	1
+Sub	1
+
+query II
+SELECT count(*), count(*) FILTER (WHERE element_type = 'heading')
+FROM read_markdown_blocks('{TEST_DIR}/projection.md', extract_extensions = 'obsidian');
+----
+5	2

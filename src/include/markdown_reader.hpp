@@ -15,6 +15,7 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_data/create_pragma_function_info.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
+#include "duckdb/formats/row_ranges.hpp"
 #include "markdown_utils.hpp"
 
 namespace duckdb {
@@ -131,25 +132,32 @@ public:
 	 */
 	static vector<OpenFileInfo> GetGlobFiles(ClientContext &context, const string &pattern);
 
+	struct MarkdownText {
+		shared_ptr<RowBuffer> owner;
+		std::string_view text;
+	};
+
 	/**
 	 * @brief Read a Markdown file and parse it
 	 *
 	 * @param context Client context for file operations
 	 * @param file_path Path to the Markdown file
 	 * @param options Markdown read options
-	 * @return string The file content
+	 * @return MarkdownText The file content and the buffer that holds it
 	 */
-	static string ReadMarkdownFile(ClientContext &context, const string &file_path, const MarkdownReadOptions &options);
+	static MarkdownText ReadMarkdownFile(ClientContext &context, const string &file_path,
+	                                     const MarkdownReadOptions &options);
 
 	/**
 	 * @brief Process a Markdown document into sections
 	 *
 	 * @param content The Markdown content
 	 * @param options Read options
+	 * @param include_content Whether to render the content of each section
 	 * @return vector<markdown_utils::MarkdownSection> Parsed sections
 	 */
-	static vector<markdown_utils::MarkdownSection> ProcessSections(const string &content,
-	                                                               const MarkdownReadOptions &options);
+	static vector<markdown_utils::MarkdownSection>
+	ProcessSections(std::string_view content, const MarkdownReadOptions &options, bool include_content);
 };
 
 } // namespace duckdb
