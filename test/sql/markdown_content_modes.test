@@ -104,6 +104,20 @@ FROM (SELECT UNNEST(md_extract_sections(E'# Main\na' || repeat('€', 1000), 1, 
 ----
 1999	true
 
+query TT
+SELECT section.section_id, section.content = E'Intro text\n\n... (see #sub)\n'
+FROM (SELECT UNNEST(md_extract_sections(E'# Main\nIntro text\n## Sub\n' || repeat('x', 2100), 1, 6, 'smart')) as section)
+WHERE section.section_id = 'main';
+----
+main	true
+
+query TTII
+SELECT section.section_id, section.content = CASE section.section_id WHEN 'main' THEN E'Main content\r## Sub\rSub content\r' ELSE E'Sub content\r' END, section.start_line, section.end_line
+FROM (SELECT UNNEST(md_extract_sections(E'# Main\rMain content\r## Sub\rSub content\r', 1, 6, 'full')) as section);
+----
+main	true	1	4
+sub	true	3	4
+
 # =============================================================================
 # Test: md_extract_section with include_subsections parameter
 # =============================================================================
