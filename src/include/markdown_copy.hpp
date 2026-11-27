@@ -119,6 +119,7 @@ struct WriteMarkdownLocalState : public LocalFunctionData {
 	//! before it can see whether inlines follow. Accumulating across the local
 	//! state also keeps a run intact when it spans two DataChunks.
 	vector<Value> elements;
+	LogicalType block_type;
 	CsvSpecials cell_specials;
 	vector<MarkdownCellColumn> cell_columns;
 	string escaped_null;

@@ -377,6 +377,7 @@ unique_ptr<LocalFunctionData> MarkdownCopyFunction::InitializeLocal(ExecutionCon
 	for (const auto &type : bind_data.column_types) {
 		result->cell_columns.push_back(CellColumn(type));
 	}
+	result->block_type = MarkdownTypes::DuckBlockType();
 	const auto &null_value = bind_data.null_value;
 	result->escaped_null.resize_and_overwrite(null_value.size() * MAX_ESCAPED_BYTE, [&](char *data, size_t) {
 		return static_cast<size_t>(WriteEscapedCell(data, null_value, bind_data) - data);
@@ -460,74 +461,68 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 			lstate.buffer += RenderSection(level, title, content, bind_data);
 		}
 	} else {
-		// Blocks mode: render individual blocks
-		for (idx_t row_idx = 0; row_idx < input.size(); row_idx++) {
-			// Get kind (optional, defaults to 'block')
-			string kind = "block";
-			if (bind_data.kind_col_idx != DConstants::INVALID_INDEX) {
-				auto kind_val = input.data[bind_data.kind_col_idx].GetValue(row_idx);
-				if (!kind_val.IsNull()) {
-					kind = kind_val.ToString();
+		// Blocks mode: rebuild each row as a duck_block for the SHARED renderer in
+		// Combine. Every row shares the one duck_block type, so the list built from
+		// them compares each element's type by identity instead of field by field.
+		// level and attributes stay typed NULLs when absent: the renderer reads an
+		// absent level as the top level. element_order is NULL because order here
+		// is row order, which is what the renderer's walk uses anyway.
+		const auto count = input.size();
+		const auto &block_type = lstate.block_type;
+		const auto &attributes_type = StructType::GetChildType(block_type, Vocab::ATTRIBUTES_IDX);
+		Vector kinds(LogicalType::VARCHAR);
+		Vector element_types(LogicalType::VARCHAR);
+		Vector contents(LogicalType::VARCHAR);
+		Vector levels(LogicalType::INTEGER);
+		Vector encodings(LogicalType::VARCHAR);
+		Vector attributes(attributes_type);
+		UnifiedVectorFormat kind_data;
+		UnifiedVectorFormat element_type_data;
+		UnifiedVectorFormat content_data;
+		UnifiedVectorFormat level_data;
+		UnifiedVectorFormat encoding_data;
+		const auto load = [&](idx_t col_idx, Vector &target, UnifiedVectorFormat &data) {
+			if (col_idx == DConstants::INVALID_INDEX) {
+				return false;
+			}
+			VectorOperations::DefaultCast(input.data[col_idx], target, count);
+			CompatToUnifiedFormat(target, count, data);
+			return true;
+		};
+		const bool has_kind = load(bind_data.kind_col_idx, kinds, kind_data);
+		load(bind_data.element_type_col_idx, element_types, element_type_data);
+		load(bind_data.content_col_idx, contents, content_data);
+		const bool has_level = load(bind_data.level_col_idx, levels, level_data);
+		const bool has_encoding = load(bind_data.encoding_col_idx, encodings, encoding_data);
+		UnifiedVectorFormat attribute_data;
+		const bool has_attributes = load(bind_data.attributes_col_idx, attributes, attribute_data);
+		const auto text = [](bool present, const UnifiedVectorFormat &data, idx_t row_idx, const char *absent) {
+			if (present) {
+				const auto idx = data.sel->get_index(row_idx);
+				if (data.validity.RowIsValid(idx)) {
+					return Value(UnifiedVectorFormat::GetData<string_t>(data)[idx].GetString());
 				}
 			}
-
-			// Get element_type (required)
-			string element_type;
-			auto element_type_val = input.data[bind_data.element_type_col_idx].GetValue(row_idx);
-			if (!element_type_val.IsNull()) {
-				element_type = element_type_val.ToString();
-			}
-
-			// Get content (required)
-			string content;
-			auto content_val = input.data[bind_data.content_col_idx].GetValue(row_idx);
-			if (!content_val.IsNull()) {
-				content = content_val.ToString();
-			}
-
-			// Get level (optional). NULL is PRESERVED rather than defaulted: the
-			// shared renderer reads an absent level as the top level, and a
-			// sentinel like -1 would be read as a real depth and compare wrong.
-			Value level = Value(LogicalType::INTEGER);
-			if (bind_data.level_col_idx != DConstants::INVALID_INDEX) {
-				auto level_val = input.data[bind_data.level_col_idx].GetValue(row_idx);
-				if (!level_val.IsNull()) {
-					level = Value::INTEGER(level_val.GetValue<int32_t>());
+			return Value(absent);
+		};
+		for (idx_t row_idx = 0; row_idx < count; row_idx++) {
+			vector<Value> fields;
+			fields.reserve(Vocab::ELEMENT_ORDER_IDX + 1);
+			fields.push_back(text(has_kind, kind_data, row_idx, "block"));
+			fields.push_back(text(true, element_type_data, row_idx, ""));
+			fields.push_back(text(true, content_data, row_idx, ""));
+			Value level(LogicalType::INTEGER);
+			if (has_level) {
+				const auto level_idx = level_data.sel->get_index(row_idx);
+				if (level_data.validity.RowIsValid(level_idx)) {
+					level = Value::INTEGER(UnifiedVectorFormat::GetData<int32_t>(level_data)[level_idx]);
 				}
 			}
-
-			// Get encoding (optional)
-			string encoding = Vocab::ENCODING_TEXT;
-			if (bind_data.encoding_col_idx != DConstants::INVALID_INDEX) {
-				auto encoding_val = input.data[bind_data.encoding_col_idx].GetValue(row_idx);
-				if (!encoding_val.IsNull()) {
-					encoding = encoding_val.ToString();
-				}
-			}
-
-			// Get attributes (optional). TYPED null when absent -- an untyped one
-			// makes the struct's type differ row to row, and the list below would
-			// then fail to build rather than degrade.
-			Value attributes = Value(LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
-			if (bind_data.attributes_col_idx != DConstants::INVALID_INDEX) {
-				auto attributes_val = input.data[bind_data.attributes_col_idx].GetValue(row_idx);
-				if (!attributes_val.IsNull()) {
-					attributes = attributes_val;
-				}
-			}
-
-			// Rebuild the duck_block and hand it to the SHARED renderer in Combine.
-			// element_order is NULL because this mode never bound the column: order
-			// here is row order, which is what the renderer's walk uses anyway.
-			child_list_t<Value> fields;
-			fields.emplace_back("kind", Value(kind));
-			fields.emplace_back("element_type", Value(element_type));
-			fields.emplace_back("content", Value(content));
-			fields.emplace_back("level", level);
-			fields.emplace_back("encoding", Value(encoding));
-			fields.emplace_back("attributes", attributes);
-			fields.emplace_back("element_order", Value(LogicalType::INTEGER));
-			lstate.elements.push_back(Value::STRUCT(std::move(fields)));
+			fields.push_back(std::move(level));
+			fields.push_back(text(has_encoding, encoding_data, row_idx, Vocab::ENCODING_TEXT));
+			fields.push_back(has_attributes ? attributes.GetValue(row_idx) : Value(attributes_type));
+			fields.push_back(Value(LogicalType::INTEGER));
+			lstate.elements.push_back(Value::STRUCT(block_type, std::move(fields)));
 		}
 	}
 	if (lstate.buffer.size() >= WRITE_BUFFER_BYTES) {
@@ -552,7 +547,7 @@ void MarkdownCopyFunction::Combine(ExecutionContext &context, FunctionData &bind
 		// blank lines between heading and body.
 		JSONTreeParser parser;
 		lstate.buffer += DuckBlockFunctions::RenderDuckBlocksToMarkdown(
-		    parser, Value::LIST(MarkdownTypes::DuckBlockType(), std::move(lstate.elements)));
+		    parser, Value::LIST(lstate.block_type, std::move(lstate.elements)));
 		lstate.elements.clear();
 	}
 
