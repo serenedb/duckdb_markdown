@@ -256,13 +256,24 @@ unique_ptr<GlobalFunctionData> MarkdownCopyFunction::InitializeGlobal(ClientCont
 //===--------------------------------------------------------------------===//
 
 unique_ptr<LocalFunctionData> MarkdownCopyFunction::InitializeLocal(ExecutionContext &context,
-                                                                    FunctionData &bind_data) {
-	return make_uniq<WriteMarkdownLocalState>();
+                                                                    FunctionData &bind_data_p) {
+	auto &bind_data = bind_data_p.Cast<WriteMarkdownBindData>();
+	auto result = make_uniq<WriteMarkdownLocalState>();
+	if (bind_data.escape_pipes) {
+		result->cell_specials.Add('|');
+	}
+	if (bind_data.escape_newlines) {
+		result->cell_specials.Add('\n');
+		result->cell_specials.Add('\r');
+	}
+	return std::move(result);
 }
 
 //===--------------------------------------------------------------------===//
 // Sink
 //===--------------------------------------------------------------------===//
+
+static constexpr idx_t WRITE_BUFFER_BYTES = idx_t(4) << 20;
 
 void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_data_p, GlobalFunctionData &gstate_p,
                                 LocalFunctionData &lstate_p, DataChunk &input) {
@@ -282,7 +293,7 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 			CompatToUnifiedFormat(texts.back(), count, columns[col_idx]);
 		}
 		for (idx_t row_idx = 0; row_idx < count; row_idx++) {
-			lstate.buffer += RenderTableRow(columns, row_idx, bind_data);
+			AppendTableRow(lstate.buffer, columns, row_idx, bind_data, lstate.cell_specials);
 		}
 	} else if (bind_data.markdown_mode == WriteMarkdownBindData::MarkdownMode::DOCUMENT) {
 		// Document mode: render sections
@@ -404,6 +415,9 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 			lstate.elements.push_back(Value::STRUCT(std::move(fields)));
 		}
 	}
+	if (lstate.buffer.size() >= WRITE_BUFFER_BYTES) {
+		WriteBuffer(bind_data, gstate, lstate);
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -427,6 +441,11 @@ void MarkdownCopyFunction::Combine(ExecutionContext &context, FunctionData &bind
 		lstate.elements.clear();
 	}
 
+	WriteBuffer(bind_data, gstate, lstate);
+}
+
+void MarkdownCopyFunction::WriteBuffer(const WriteMarkdownBindData &bind_data, WriteMarkdownGlobalState &gstate,
+                                       WriteMarkdownLocalState &lstate) {
 	if (lstate.buffer.empty()) {
 		return;
 	}
@@ -532,40 +551,38 @@ string MarkdownCopyFunction::RenderTableSeparator(const WriteMarkdownBindData &b
 	return result;
 }
 
-string MarkdownCopyFunction::RenderTableRow(const vector<UnifiedVectorFormat> &columns, idx_t row_idx,
-                                            const WriteMarkdownBindData &bind_data) {
-	string result = "|";
+void MarkdownCopyFunction::AppendTableRow(string &out, const vector<UnifiedVectorFormat> &columns, idx_t row_idx,
+                                          const WriteMarkdownBindData &bind_data, const CsvSpecials &specials) {
+	out += '|';
 	for (const auto &column : columns) {
 		const auto idx = column.sel->get_index(row_idx);
-		string cell_value;
-
+		out += ' ';
 		if (column.validity.RowIsValid(idx)) {
-			cell_value = UnifiedVectorFormat::GetData<string_t>(column)[idx].GetString();
+			const auto &value = UnifiedVectorFormat::GetData<string_t>(column)[idx];
+			AppendCell(out, std::string_view(value.GetData(), value.GetSize()), bind_data, specials);
 		} else {
-			cell_value = bind_data.null_value;
+			AppendCell(out, bind_data.null_value, bind_data, specials);
 		}
-
-		result += " " + EscapeCellValue(cell_value, bind_data) + " |";
+		out += " |";
 	}
-	result += "\n";
-	return result;
+	out += '\n';
 }
 
-string MarkdownCopyFunction::EscapeCellValue(const string &value, const WriteMarkdownBindData &bind_data) {
-	string result = value;
-
-	// Escape pipes
-	if (bind_data.escape_pipes) {
-		result = StringUtil::Replace(result, "|", "\\|");
+void MarkdownCopyFunction::AppendCell(string &out, std::string_view value, const WriteMarkdownBindData &bind_data,
+                                      const CsvSpecials &specials) {
+	if (!specials.In(value)) {
+		out.append(value.data(), value.size());
+		return;
 	}
-
-	// Escape newlines
-	if (bind_data.escape_newlines) {
-		result = StringUtil::Replace(result, "\n", "<br>");
-		result = StringUtil::Replace(result, "\r", "");
+	for (const char c : value) {
+		if (c == '|' && bind_data.escape_pipes) {
+			out += "\\|";
+		} else if (c == '\n' && bind_data.escape_newlines) {
+			out += "<br>";
+		} else if (c != '\r' || !bind_data.escape_newlines) {
+			out += c;
+		}
 	}
-
-	return result;
 }
 
 //===--------------------------------------------------------------------===//

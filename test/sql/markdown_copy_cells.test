@@ -1,0 +1,32 @@
+# name: test/sql/markdown_copy_cells.test
+# description: Table cells escape pipes, line feeds and carriage returns wherever they fall, also past a cell's first 64 bytes, and a table larger than the write buffer keeps one header and every row
+# group: [sql]
+
+require markdown
+
+statement ok
+CREATE TABLE cells AS SELECT * FROM (VALUES (1, 'a|b'), (2, repeat('x', 70) || '|' || chr(10) || chr(13) || 'z'), (3, 'cr' || chr(13) || chr(10) || 'lf'), (4, NULL), (5, repeat('y', 100))) t(i, s);
+
+statement ok
+COPY cells TO '{TEST_DIR}/cells_escaped.md' (FORMAT MARKDOWN);
+
+query I
+SELECT content = '| i | s |' || chr(10) || '|---:|---|' || chr(10) || '| 1 | a\|b |' || chr(10) || '| 2 | ' || repeat('x', 70) || '\|<br>z |' || chr(10) || '| 3 | cr<br>lf |' || chr(10) || '| 4 |  |' || chr(10) || '| 5 | ' || repeat('y', 100) || ' |' || chr(10) FROM read_text('{TEST_DIR}/cells_escaped.md');
+----
+true
+
+statement ok
+COPY cells TO '{TEST_DIR}/cells_raw.md' (FORMAT MARKDOWN, escape_pipes false, escape_newlines false, null_value 'a|b');
+
+query I
+SELECT content = '| i | s |' || chr(10) || '|---:|---|' || chr(10) || '| 1 | a|b |' || chr(10) || '| 2 | ' || repeat('x', 70) || '|' || chr(10) || chr(13) || 'z |' || chr(10) || '| 3 | cr' || chr(13) || chr(10) || 'lf |' || chr(10) || '| 4 | a|b |' || chr(10) || '| 5 | ' || repeat('y', 100) || ' |' || chr(10) FROM read_text('{TEST_DIR}/cells_raw.md');
+----
+true
+
+statement ok
+COPY (SELECT i, repeat('v', 20) AS s FROM range(250000) t(i)) TO '{TEST_DIR}/cells_big.md' (FORMAT MARKDOWN);
+
+query III
+SELECT count(*), count(*) FILTER (WHERE line = '| i | s |'), count(DISTINCT line) FROM (SELECT unnest(string_split(content, chr(10))) AS line FROM read_text('{TEST_DIR}/cells_big.md'));
+----
+250003	1	250003

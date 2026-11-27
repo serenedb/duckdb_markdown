@@ -4,6 +4,7 @@
 #include "duckdb_compat.hpp"
 #include "duckdb/function/copy_function.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/formats/csv_encoder.hpp"
 #include <string>
 #include <vector>
 
@@ -86,6 +87,7 @@ struct WriteMarkdownLocalState : public LocalFunctionData {
 	//! before it can see whether inlines follow. Accumulating across the local
 	//! state also keeps a run intact when it spans two DataChunks.
 	vector<Value> elements;
+	CsvSpecials cell_specials;
 };
 
 //===--------------------------------------------------------------------===//
@@ -136,12 +138,14 @@ private:
 	//! Render the separator row with alignment indicators
 	static string RenderTableSeparator(const WriteMarkdownBindData &bind_data);
 
-	//! Render a single data row for table mode
-	static string RenderTableRow(const vector<UnifiedVectorFormat> &columns, idx_t row_idx,
-	                             const WriteMarkdownBindData &bind_data);
+	static void AppendTableRow(string &out, const vector<UnifiedVectorFormat> &columns, idx_t row_idx,
+	                           const WriteMarkdownBindData &bind_data, const CsvSpecials &specials);
 
-	//! Escape a cell value for table mode
-	static string EscapeCellValue(const string &value, const WriteMarkdownBindData &bind_data);
+	static void AppendCell(string &out, std::string_view value, const WriteMarkdownBindData &bind_data,
+	                       const CsvSpecials &specials);
+
+	static void WriteBuffer(const WriteMarkdownBindData &bind_data, WriteMarkdownGlobalState &gstate,
+	                        WriteMarkdownLocalState &lstate);
 
 	//===--------------------------------------------------------------------===//
 	// Document Mode Helpers
