@@ -72,6 +72,7 @@ void MarkdownCopyFunction::Register(ExtensionLoader &loader) {
 	func.copy_to_combine = Combine;
 	func.copy_to_finalize = Finalize;
 	func.copy_options = CopyOptions;
+	func.parallel_sink = true;
 
 	loader.RegisterFunction(func);
 }
