@@ -78,6 +78,38 @@ struct WriteMarkdownGlobalState : public GlobalFunctionData {
 // Markdown Copy Local State
 //===--------------------------------------------------------------------===//
 
+enum class MarkdownCellFormat : uint8_t {
+	TEXT,
+	BOOLEAN,
+	INT8,
+	INT16,
+	INT32,
+	INT64,
+	UINT8,
+	UINT16,
+	UINT32,
+	UINT64,
+	DECIMAL16,
+	DECIMAL32,
+	DECIMAL64,
+	DECIMAL128,
+	DATE,
+	TIME,
+	TIME_NS,
+	TIMESTAMP,
+	TIMESTAMP_NS,
+	INTERVAL,
+	UUID
+};
+
+struct MarkdownCellColumn {
+	MarkdownCellFormat format = MarkdownCellFormat::TEXT;
+	bool check = true;
+	uint8_t width = 0;
+	uint8_t scale = 0;
+	idx_t max_length = 0;
+};
+
 struct WriteMarkdownLocalState : public LocalFunctionData {
 	//! Local buffer for accumulating output
 	string buffer;
@@ -88,6 +120,8 @@ struct WriteMarkdownLocalState : public LocalFunctionData {
 	//! state also keeps a run intact when it spans two DataChunks.
 	vector<Value> elements;
 	CsvSpecials cell_specials;
+	vector<MarkdownCellColumn> cell_columns;
+	string escaped_null;
 };
 
 //===--------------------------------------------------------------------===//
@@ -138,11 +172,8 @@ private:
 	//! Render the separator row with alignment indicators
 	static string RenderTableSeparator(const WriteMarkdownBindData &bind_data);
 
-	static void AppendTableRow(string &out, const vector<UnifiedVectorFormat> &columns, idx_t row_idx,
-	                           const WriteMarkdownBindData &bind_data, const CsvSpecials &specials);
-
-	static void AppendCell(string &out, std::string_view value, const WriteMarkdownBindData &bind_data,
-	                       const CsvSpecials &specials);
+	static void AppendTableRows(WriteMarkdownLocalState &lstate, const vector<UnifiedVectorFormat> &columns,
+	                            idx_t count, const WriteMarkdownBindData &bind_data);
 
 	static void WriteBuffer(const WriteMarkdownBindData &bind_data, WriteMarkdownGlobalState &gstate,
 	                        WriteMarkdownLocalState &lstate);

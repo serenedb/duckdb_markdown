@@ -4,7 +4,10 @@
 #include "duck_block_functions.hpp"
 #include "markdown_types.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/read_within_page.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/cast_helpers.hpp"
+#include "duckdb/common/types/uuid.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -256,6 +259,110 @@ unique_ptr<GlobalFunctionData> MarkdownCopyFunction::InitializeGlobal(ClientCont
 // Initialize Local
 //===--------------------------------------------------------------------===//
 
+static constexpr idx_t WRITE_BUFFER_BYTES = idx_t(4) << 20;
+static constexpr idx_t CELL_SLACK = 64;
+static constexpr idx_t MAX_ESCAPED_BYTE = 4;
+
+static inline char *CopyCell(char *out, std::string_view value) {
+	CopyWithSlack<CELL_SLACK>(out, value.data(), value.size());
+	return out + value.size();
+}
+
+static char *WriteEscapedCell(char *out, std::string_view value, const WriteMarkdownBindData &bind_data) {
+	for (const char c : value) {
+		if (c == '|' && bind_data.escape_pipes) {
+			*out++ = '\\';
+			*out++ = '|';
+		} else if (c == '\n' && bind_data.escape_newlines) {
+			memcpy(out, "<br>", MAX_ESCAPED_BYTE);
+			out += MAX_ESCAPED_BYTE;
+		} else if (c != '\r' || !bind_data.escape_newlines) {
+			*out++ = c;
+		}
+	}
+	return out;
+}
+
+static MarkdownCellColumn Direct(MarkdownCellFormat format, idx_t max_length) {
+	MarkdownCellColumn column;
+	column.format = format;
+	column.check = false;
+	column.max_length = max_length;
+	return column;
+}
+
+static MarkdownCellColumn CellColumn(const LogicalType &type) {
+	switch (type.id()) {
+	case LogicalTypeId::BOOLEAN:
+		return Direct(MarkdownCellFormat::BOOLEAN, 5);
+	case LogicalTypeId::TINYINT:
+		return Direct(MarkdownCellFormat::INT8, 4);
+	case LogicalTypeId::SMALLINT:
+		return Direct(MarkdownCellFormat::INT16, 6);
+	case LogicalTypeId::INTEGER:
+		return Direct(MarkdownCellFormat::INT32, 11);
+	case LogicalTypeId::BIGINT:
+		return Direct(MarkdownCellFormat::INT64, 20);
+	case LogicalTypeId::UTINYINT:
+		return Direct(MarkdownCellFormat::UINT8, 3);
+	case LogicalTypeId::USMALLINT:
+		return Direct(MarkdownCellFormat::UINT16, 5);
+	case LogicalTypeId::UINTEGER:
+		return Direct(MarkdownCellFormat::UINT32, 10);
+	case LogicalTypeId::UBIGINT:
+		return Direct(MarkdownCellFormat::UINT64, 20);
+	case LogicalTypeId::DECIMAL: {
+		auto format = MarkdownCellFormat::DECIMAL128;
+		switch (type.InternalType()) {
+		case PhysicalType::INT16:
+			format = MarkdownCellFormat::DECIMAL16;
+			break;
+		case PhysicalType::INT32:
+			format = MarkdownCellFormat::DECIMAL32;
+			break;
+		case PhysicalType::INT64:
+			format = MarkdownCellFormat::DECIMAL64;
+			break;
+		default:
+			break;
+		}
+		auto column = Direct(format, DecimalType::GetWidth(type) + idx_t(3));
+		column.width = DecimalType::GetWidth(type);
+		column.scale = DecimalType::GetScale(type);
+		return column;
+	}
+	case LogicalTypeId::DATE:
+		return Direct(MarkdownCellFormat::DATE, DateToStringCast::MAX_LENGTH);
+	case LogicalTypeId::TIME:
+		return Direct(MarkdownCellFormat::TIME, TimeToStringCast::MAX_LENGTH);
+	case LogicalTypeId::TIME_NS:
+		return Direct(MarkdownCellFormat::TIME_NS, TimeToStringCast::MAX_LENGTH);
+	case LogicalTypeId::TIMESTAMP:
+		return Direct(MarkdownCellFormat::TIMESTAMP, TimestampToStringCast::MAX_LENGTH);
+	case LogicalTypeId::TIMESTAMP_NS:
+		return Direct(MarkdownCellFormat::TIMESTAMP_NS, TimestampToStringCast::MAX_LENGTH);
+	case LogicalTypeId::INTERVAL:
+		return Direct(MarkdownCellFormat::INTERVAL, IntervalToStringCast::MAX_LENGTH);
+	case LogicalTypeId::UUID:
+		return Direct(MarkdownCellFormat::UUID, UUID::STRING_SIZE);
+	case LogicalTypeId::HUGEINT:
+	case LogicalTypeId::UHUGEINT:
+	case LogicalTypeId::FLOAT:
+	case LogicalTypeId::DOUBLE:
+	case LogicalTypeId::TIME_TZ:
+	case LogicalTypeId::TIMESTAMP_SEC:
+	case LogicalTypeId::TIMESTAMP_MS:
+	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::TIMESTAMP_TZ_NS: {
+		MarkdownCellColumn column;
+		column.check = false;
+		return column;
+	}
+	default:
+		return MarkdownCellColumn();
+	}
+}
+
 unique_ptr<LocalFunctionData> MarkdownCopyFunction::InitializeLocal(ExecutionContext &context,
                                                                     FunctionData &bind_data_p) {
 	auto &bind_data = bind_data_p.Cast<WriteMarkdownBindData>();
@@ -267,14 +374,19 @@ unique_ptr<LocalFunctionData> MarkdownCopyFunction::InitializeLocal(ExecutionCon
 		result->cell_specials.Add('\n');
 		result->cell_specials.Add('\r');
 	}
+	for (const auto &type : bind_data.column_types) {
+		result->cell_columns.push_back(CellColumn(type));
+	}
+	const auto &null_value = bind_data.null_value;
+	result->escaped_null.resize_and_overwrite(null_value.size() * MAX_ESCAPED_BYTE, [&](char *data, size_t) {
+		return static_cast<size_t>(WriteEscapedCell(data, null_value, bind_data) - data);
+	});
 	return std::move(result);
 }
 
 //===--------------------------------------------------------------------===//
 // Sink
 //===--------------------------------------------------------------------===//
-
-static constexpr idx_t WRITE_BUFFER_BYTES = idx_t(4) << 20;
 
 void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_data_p, GlobalFunctionData &gstate_p,
                                 LocalFunctionData &lstate_p, DataChunk &input) {
@@ -289,13 +401,15 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 		texts.reserve(input.ColumnCount());
 		vector<UnifiedVectorFormat> columns(input.ColumnCount());
 		for (idx_t col_idx = 0; col_idx < input.ColumnCount(); col_idx++) {
+			if (lstate.cell_columns[col_idx].format != MarkdownCellFormat::TEXT) {
+				CompatToUnifiedFormat(input.data[col_idx], count, columns[col_idx]);
+				continue;
+			}
 			texts.emplace_back(LogicalType::VARCHAR);
 			VectorOperations::DefaultCast(input.data[col_idx], texts.back(), count);
 			CompatToUnifiedFormat(texts.back(), count, columns[col_idx]);
 		}
-		for (idx_t row_idx = 0; row_idx < count; row_idx++) {
-			AppendTableRow(lstate.buffer, columns, row_idx, bind_data, lstate.cell_specials);
-		}
+		AppendTableRows(lstate, columns, count, bind_data);
 	} else if (bind_data.markdown_mode == WriteMarkdownBindData::MarkdownMode::DOCUMENT) {
 		// Document mode: render sections
 		const auto count = input.size();
@@ -552,38 +666,132 @@ string MarkdownCopyFunction::RenderTableSeparator(const WriteMarkdownBindData &b
 	return result;
 }
 
-void MarkdownCopyFunction::AppendTableRow(string &out, const vector<UnifiedVectorFormat> &columns, idx_t row_idx,
-                                          const WriteMarkdownBindData &bind_data, const CsvSpecials &specials) {
-	out += '|';
-	for (const auto &column : columns) {
-		const auto idx = column.sel->get_index(row_idx);
-		out += ' ';
-		if (column.validity.RowIsValid(idx)) {
-			const auto &value = UnifiedVectorFormat::GetData<string_t>(column)[idx];
-			AppendCell(out, std::string_view(value.GetData(), value.GetSize()), bind_data, specials);
-		} else {
-			AppendCell(out, bind_data.null_value, bind_data, specials);
+template <class T>
+static char *WriteInteger(char *out, T value) {
+	using UNSIGNED = typename MakeUnsigned<T>::type;
+	auto magnitude = static_cast<UNSIGNED>(value);
+	idx_t sign = 0;
+	if constexpr (std::is_signed<T>::value) {
+		if (value < 0) {
+			magnitude = static_cast<UNSIGNED>(UNSIGNED(0) - magnitude);
+			*out = '-';
+			sign = 1;
 		}
-		out += " |";
 	}
-	out += '\n';
+	const auto end = out + sign + NumericHelper::UnsignedLength<UNSIGNED>(magnitude);
+	NumericHelper::FormatUnsigned<UNSIGNED>(magnitude, end);
+	return end;
 }
 
-void MarkdownCopyFunction::AppendCell(string &out, std::string_view value, const WriteMarkdownBindData &bind_data,
-                                      const CsvSpecials &specials) {
-	if (!specials.In(value)) {
-		out.append(value.data(), value.size());
-		return;
+template <class T>
+static char *WriteDecimal(char *out, T value, const MarkdownCellColumn &column) {
+	const auto length = UnsafeNumericCast<idx_t>(DecimalToString::DecimalLength<T>(value, column.width, column.scale));
+	DecimalToString::FormatDecimal<T>(value, column.width, column.scale, out, length);
+	return out + length;
+}
+
+template <class T>
+static const T &CellValue(const UnifiedVectorFormat &column, idx_t idx) {
+	return UnifiedVectorFormat::GetData<T>(column)[idx];
+}
+
+static char *WriteCell(char *out, const MarkdownCellColumn &cell, const UnifiedVectorFormat &column, idx_t idx,
+                       const WriteMarkdownLocalState &lstate, const WriteMarkdownBindData &bind_data) {
+	switch (cell.format) {
+	case MarkdownCellFormat::TEXT: {
+		const auto &text = CellValue<string_t>(column, idx);
+		const std::string_view value(text.GetData(), text.GetSize());
+		if (cell.check && lstate.cell_specials.In(value)) {
+			return WriteEscapedCell(out, value, bind_data);
+		}
+		return CopyCell(out, value);
 	}
-	for (const char c : value) {
-		if (c == '|' && bind_data.escape_pipes) {
-			out += "\\|";
-		} else if (c == '\n' && bind_data.escape_newlines) {
-			out += "<br>";
-		} else if (c != '\r' || !bind_data.escape_newlines) {
-			out += c;
+	case MarkdownCellFormat::BOOLEAN:
+		if (CellValue<bool>(column, idx)) {
+			memcpy(out, "true", 4);
+			return out + 4;
+		}
+		memcpy(out, "false", 5);
+		return out + 5;
+	case MarkdownCellFormat::INT8:
+		return WriteInteger(out, CellValue<int8_t>(column, idx));
+	case MarkdownCellFormat::INT16:
+		return WriteInteger(out, CellValue<int16_t>(column, idx));
+	case MarkdownCellFormat::INT32:
+		return WriteInteger(out, CellValue<int32_t>(column, idx));
+	case MarkdownCellFormat::INT64:
+		return WriteInteger(out, CellValue<int64_t>(column, idx));
+	case MarkdownCellFormat::UINT8:
+		return WriteInteger(out, CellValue<uint8_t>(column, idx));
+	case MarkdownCellFormat::UINT16:
+		return WriteInteger(out, CellValue<uint16_t>(column, idx));
+	case MarkdownCellFormat::UINT32:
+		return WriteInteger(out, CellValue<uint32_t>(column, idx));
+	case MarkdownCellFormat::UINT64:
+		return WriteInteger(out, CellValue<uint64_t>(column, idx));
+	case MarkdownCellFormat::DECIMAL16:
+		return WriteDecimal(out, CellValue<int16_t>(column, idx), cell);
+	case MarkdownCellFormat::DECIMAL32:
+		return WriteDecimal(out, CellValue<int32_t>(column, idx), cell);
+	case MarkdownCellFormat::DECIMAL64:
+		return WriteDecimal(out, CellValue<int64_t>(column, idx), cell);
+	case MarkdownCellFormat::DECIMAL128:
+		return WriteDecimal(out, CellValue<hugeint_t>(column, idx), cell);
+	case MarkdownCellFormat::DATE:
+		return out + DateToStringCast::Write(CellValue<date_t>(column, idx), out);
+	case MarkdownCellFormat::TIME:
+		return out + TimeToStringCast::Write(CellValue<dtime_t>(column, idx), out);
+	case MarkdownCellFormat::TIME_NS:
+		return out + TimeToStringCast::Write(CellValue<dtime_ns_t>(column, idx), out);
+	case MarkdownCellFormat::TIMESTAMP:
+		return out + TimestampToStringCast::Write(CellValue<timestamp_t>(column, idx), out);
+	case MarkdownCellFormat::TIMESTAMP_NS:
+		return out + TimestampToStringCast::Write(CellValue<timestamp_ns_t>(column, idx), out);
+	case MarkdownCellFormat::INTERVAL:
+		return out + IntervalToStringCast::Format(CellValue<interval_t>(column, idx), out);
+	case MarkdownCellFormat::UUID:
+		UUID::ToString(CellValue<hugeint_t>(column, idx), out);
+		return out + UUID::STRING_SIZE;
+	}
+	throw InternalException("Unknown Markdown cell format");
+}
+
+void MarkdownCopyFunction::AppendTableRows(WriteMarkdownLocalState &lstate, const vector<UnifiedVectorFormat> &columns,
+                                           idx_t count, const WriteMarkdownBindData &bind_data) {
+	idx_t bound = count * (2 + 3 * columns.size()) + CELL_SLACK;
+	for (idx_t col_idx = 0; col_idx < columns.size(); col_idx++) {
+		const auto &column = columns[col_idx];
+		const auto &cell = lstate.cell_columns[col_idx];
+		if (cell.format != MarkdownCellFormat::TEXT) {
+			bound += count * MaxValue(cell.max_length, lstate.escaped_null.size());
+			continue;
+		}
+		const auto values = UnifiedVectorFormat::GetData<string_t>(column);
+		const idx_t growth = cell.check ? MAX_ESCAPED_BYTE : 1;
+		for (idx_t row_idx = 0; row_idx < count; row_idx++) {
+			const auto idx = column.sel->get_index(row_idx);
+			bound += column.validity.RowIsValid(idx) ? values[idx].GetSize() * growth : lstate.escaped_null.size();
 		}
 	}
+	const auto old_size = lstate.buffer.size();
+	lstate.buffer.resize_and_overwrite(old_size + bound, [&](char *data, size_t) {
+		auto out = data + old_size;
+		for (idx_t row_idx = 0; row_idx < count; row_idx++) {
+			*out++ = '|';
+			for (idx_t col_idx = 0; col_idx < columns.size(); col_idx++) {
+				const auto &column = columns[col_idx];
+				const auto idx = column.sel->get_index(row_idx);
+				*out++ = ' ';
+				out = column.validity.RowIsValid(idx)
+				          ? WriteCell(out, lstate.cell_columns[col_idx], column, idx, lstate, bind_data)
+				          : CopyCell(out, lstate.escaped_null);
+				*out++ = ' ';
+				*out++ = '|';
+			}
+			*out++ = '\n';
+		}
+		return static_cast<size_t>(out - data);
+	});
 }
 
 //===--------------------------------------------------------------------===//
