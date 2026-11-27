@@ -1,0 +1,44 @@
+# name: test/sql/markdown_large_documents.test
+# description: Documents of a few bytes to several megabytes, parsed one after another on one thread, give every parse its exact results
+# group: [sql]
+
+require markdown
+
+statement ok
+SET threads = 1
+
+statement ok
+CREATE TABLE docs AS SELECT n, CASE WHEN n % 3 = 0 THEN repeat('word ', 300000) ELSE repeat('# Section' || chr(10) || chr(10) || 'Some *emphasis*, a [link](https://example.com/page) and ![img](pic.png) with `code`.' || chr(10) || chr(10) || '| a | b |' || chr(10) || '|---|---|' || chr(10) || '| 1 | 2 |' || chr(10) || chr(10) || '```python' || chr(10) || 'print(1)' || chr(10) || '```' || chr(10) || chr(10) || '- item one' || chr(10) || '- item two' || chr(10) || chr(10), CASE n WHEN 1 THEN 20000 WHEN 2 THEN 3 WHEN 4 THEN 40000 ELSE 1 END) END AS md FROM range(1, 7) t(n)
+
+query II
+SELECT n, length(md) FROM docs ORDER BY n
+----
+1	3500000
+2	525
+3	1500000
+4	7000000
+5	175
+6	1500000
+
+query IIIIIIIII
+SELECT n, length(md_to_html(md)), length(md_to_text(md)), len(md_extract_links(md)), len(md_extract_images(md)), len(md_extract_code_blocks(md)), len(md_extract_table_rows(md)), len(md_extract_sections(md)), md_stats(md).word_count FROM docs ORDER BY n
+----
+1	7320000	2379999	20000	20000	20000	80000	20000	600000
+2	1098	356	3	3	3	12	3	90
+3	1500007	1500000	0	0	0	0	0	300000
+4	14640000	4759999	40000	40000	40000	160000	40000	1200000
+5	366	118	1	1	1	4	1	30
+6	1500007	1500000	0	0	0	0	0	300000
+
+statement ok
+COPY (SELECT md FROM docs WHERE n = 4) TO '__TEST_DIR__/large.md' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '')
+
+query II
+SELECT count(*), sum(length(content)) FROM read_markdown_sections('__TEST_DIR__/large.md', include_content := true)
+----
+40000	6560001
+
+query I
+SELECT count(*) FROM read_markdown_blocks('__TEST_DIR__/large.md')
+----
+640000

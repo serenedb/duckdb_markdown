@@ -22,33 +22,181 @@ using Vocab = DuckBlockVocabulary;
 
 namespace markdown_utils {
 
-struct CmarkParserFree {
-	void operator()(cmark_parser *parser) const {
-		cmark_parser_free(parser);
+class CmarkArena {
+public:
+	struct Mark {
+		size_t chunk = 0;
+		size_t used = 0;
+	};
+
+	static CmarkArena &Get() {
+		thread_local CmarkArena arena;
+		return arena;
 	}
+
+	~CmarkArena() {
+		for (auto &chunk : chunks) {
+			Chunks().free(chunk.data);
+		}
+	}
+
+	Mark Open() {
+		depth++;
+		return chunks.empty() ? Mark() : Mark {current, chunks[current].used};
+	}
+
+	void Close(const Mark &mark) {
+		current = mark.chunk;
+		for (size_t i = current; i < chunks.size(); i++) {
+			chunks[i].used = i == current ? mark.used : 0;
+		}
+		if (--depth == 0) {
+			while (retained > RETAINED_BYTES && chunks.size() > 1) {
+				retained -= chunks.back().size;
+				Chunks().free(chunks.back().data);
+				chunks.pop_back();
+			}
+		}
+	}
+
+	void *Allocate(size_t size) {
+		const size_t total = Aligned(HEADER + size);
+		if (chunks.empty() || chunks[current].size - chunks[current].used < total) {
+			NextChunk(total);
+		}
+		auto &chunk = chunks[current];
+		auto block = chunk.data + chunk.used;
+		chunk.used += total;
+		memcpy(block, &size, HEADER);
+		return block + HEADER;
+	}
+
+	void *Reallocate(void *ptr, size_t size) {
+		if (!ptr) {
+			return Allocate(size);
+		}
+		auto block = static_cast<uint8_t *>(ptr) - HEADER;
+		size_t old_size;
+		memcpy(&old_size, block, HEADER);
+		auto &chunk = chunks[current];
+		const size_t old_total = Aligned(HEADER + old_size);
+		const size_t total = Aligned(HEADER + size);
+		if (block >= chunk.data && block + old_total == chunk.data + chunk.used &&
+		    chunk.size - chunk.used + old_total >= total) {
+			chunk.used = chunk.used - old_total + total;
+			memcpy(block, &size, HEADER);
+			return ptr;
+		}
+		auto result = Allocate(size);
+		memcpy(result, ptr, MinValue(old_size, size));
+		return result;
+	}
+
+	void Release(void *ptr) {
+		if (!ptr || chunks.empty()) {
+			return;
+		}
+		auto block = static_cast<uint8_t *>(ptr) - HEADER;
+		size_t size;
+		memcpy(&size, block, HEADER);
+		auto &chunk = chunks[current];
+		if (block >= chunk.data && block + Aligned(HEADER + size) == chunk.data + chunk.used) {
+			chunk.used = static_cast<size_t>(block - chunk.data);
+		}
+	}
+
+	static cmark_mem *Mem() {
+		static cmark_mem mem {Calloc, Realloc, Free};
+		return &mem;
+	}
+
+private:
+	struct Chunk {
+		uint8_t *data;
+		size_t size;
+		size_t used;
+	};
+
+	static constexpr size_t HEADER = sizeof(size_t);
+	static constexpr size_t FIRST_CHUNK_BYTES = 256 << 10;
+	static constexpr size_t MAX_CHUNK_BYTES = 64 << 20;
+	static constexpr size_t RETAINED_BYTES = 4 << 20;
+
+	static size_t Aligned(size_t size) {
+		return (size + HEADER - 1) & ~(HEADER - 1);
+	}
+
+	static cmark_mem &Chunks() {
+		return *cmark_get_default_mem_allocator();
+	}
+
+	void NextChunk(size_t total) {
+		const size_t next = chunks.empty() ? 0 : current + 1;
+		if (next < chunks.size() && chunks[next].size >= total) {
+			current = next;
+			chunks[current].used = 0;
+			return;
+		}
+		const size_t grown = chunks.empty() ? FIRST_CHUNK_BYTES : MinValue(chunks.back().size * 2, MAX_CHUNK_BYTES);
+		const size_t size = MaxValue(total, grown);
+		Chunk chunk {static_cast<uint8_t *>(Chunks().calloc(1, size)), size, 0};
+		retained += size;
+		if (next < chunks.size()) {
+			retained -= chunks[next].size;
+			Chunks().free(chunks[next].data);
+			chunks[next] = chunk;
+		} else {
+			chunks.push_back(chunk);
+		}
+		current = next;
+	}
+
+	static void *Calloc(size_t count, size_t size) {
+		const size_t bytes = count * size;
+		auto result = Get().Allocate(bytes);
+		memset(result, 0, bytes);
+		return result;
+	}
+
+	static void *Realloc(void *ptr, size_t size) {
+		return Get().Reallocate(ptr, size);
+	}
+
+	static void Free(void *ptr) {
+		Get().Release(ptr);
+	}
+
+	std::vector<Chunk> chunks;
+	size_t current = 0;
+	size_t depth = 0;
+	size_t retained = 0;
 };
 
-struct CmarkNodeFree {
-	void operator()(cmark_node *node) const {
-		cmark_node_free(node);
+class CmarkArenaScope {
+public:
+	CmarkArenaScope() : arena(CmarkArena::Get()), mark(arena.Open()) {
 	}
-};
+	~CmarkArenaScope() {
+		arena.Close(mark);
+	}
+	CmarkArenaScope(const CmarkArenaScope &) = delete;
+	CmarkArenaScope &operator=(const CmarkArenaScope &) = delete;
 
-struct CmarkIterFree {
-	void operator()(cmark_iter *iter) const {
-		cmark_iter_free(iter);
+	cmark_mem *Mem() const {
+		return CmarkArena::Mem();
 	}
+
+private:
+	CmarkArena &arena;
+	const CmarkArena::Mark mark;
 };
 
 struct CmarkTextFree {
 	void operator()(char *text) const {
-		free(text);
+		CmarkArena::Mem()->free(text);
 	}
 };
 
-using CmarkParser = std::unique_ptr<cmark_parser, CmarkParserFree>;
-using CmarkDoc = std::unique_ptr<cmark_node, CmarkNodeFree>;
-using CmarkIter = std::unique_ptr<cmark_iter, CmarkIterFree>;
 using CmarkText = std::unique_ptr<char, CmarkTextFree>;
 
 //===--------------------------------------------------------------------===//
@@ -328,8 +476,8 @@ std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavo
 	}
 
 	// Parse the markdown document
-	const CmarkParser parser_owner {cmark_parser_new(options)};
-	cmark_parser *parser = parser_owner.get();
+	const CmarkArenaScope arena;
+	cmark_parser *parser = cmark_parser_new_with_mem(options, arena.Mem());
 
 	if (flavor == MarkdownFlavor::GFM) {
 		// Add GitHub extensions
@@ -355,8 +503,8 @@ std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavo
 	cmark_parser_feed(parser, content.data(), content.length());
 
 	// Parse and render
-	const CmarkDoc doc {cmark_parser_finish(parser)};
-	const CmarkText html {cmark_render_html(doc.get(), options, nullptr)};
+	cmark_node *doc = cmark_parser_finish(parser);
+	const CmarkText html {cmark_render_html(doc, options, nullptr)};
 
 	// cmark can return NULL on allocation failure; guard against constructing
 	// a std::string from a NULL pointer (undefined behaviour).
@@ -383,12 +531,13 @@ std::string MarkdownToText(const std::string &markdown_str) {
 	}
 
 	// Parse the markdown document
-	const CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
-	cmark_parser_feed(parser.get(), content.data(), content.length());
-	const CmarkDoc doc {cmark_parser_finish(parser.get())};
+	const CmarkArenaScope arena;
+	cmark_parser *parser = cmark_parser_new_with_mem(CMARK_OPT_DEFAULT, arena.Mem());
+	cmark_parser_feed(parser, content.data(), content.length());
+	cmark_node *doc = cmark_parser_finish(parser);
 
 	// Render as plain text
-	const CmarkText text {cmark_render_plaintext(doc.get(), CMARK_OPT_DEFAULT, 0)};
+	const CmarkText text {cmark_render_plaintext(doc, CMARK_OPT_DEFAULT, 0)};
 
 	// Guard against a NULL return (see MarkdownToHTML).
 	std::string result(text ? text.get() : "");
@@ -503,11 +652,11 @@ static void CountStructuralNodes(std::string_view markdown_str, MarkdownStats &s
 		return;
 	}
 
-	const CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
-	cmark_parser_feed(parser.get(), markdown_str.data(), markdown_str.length());
-	const CmarkDoc doc {cmark_parser_finish(parser.get())};
-	const CmarkIter iter_owner {cmark_iter_new(doc.get())};
-	cmark_iter *iter = iter_owner.get();
+	const CmarkArenaScope arena;
+	cmark_parser *parser = cmark_parser_new_with_mem(CMARK_OPT_DEFAULT, arena.Mem());
+	cmark_parser_feed(parser, markdown_str.data(), markdown_str.length());
+	cmark_node *doc = cmark_parser_finish(parser);
+	cmark_iter *iter = cmark_iter_new(doc);
 
 	cmark_event_type ev_type;
 	while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
@@ -757,13 +906,13 @@ std::vector<CodeBlock> ExtractCodeBlocks(const std::string &markdown_str_in, con
 	const std::string markdown_str = StripFrontmatterKeepLines(markdown_str_in);
 
 	// Parse with cmark-gfm
-	const CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
-	cmark_parser_feed(parser.get(), markdown_str.c_str(), markdown_str.length());
-	const CmarkDoc doc {cmark_parser_finish(parser.get())};
+	const CmarkArenaScope arena;
+	cmark_parser *parser = cmark_parser_new_with_mem(CMARK_OPT_DEFAULT, arena.Mem());
+	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
+	cmark_node *doc = cmark_parser_finish(parser);
 
 	// Walk the AST looking for code block nodes
-	const CmarkIter iter_owner {cmark_iter_new(doc.get())};
-	cmark_iter *iter = iter_owner.get();
+	cmark_iter *iter = cmark_iter_new(doc);
 	cmark_event_type ev_type;
 
 	while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
@@ -843,35 +992,13 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 	// Default max_content_length for smart mode
 	idx_t effective_max_length = max_content_length > 0 ? max_content_length : 2000;
 
-	// RAII wrapper for cmark resources
-	struct CMarkRAII {
-		cmark_parser *parser = nullptr;
-		cmark_node *doc = nullptr;
-
-		CMarkRAII() {
-			parser = cmark_parser_new(CMARK_OPT_DEFAULT);
-			if (!parser)
-				throw std::runtime_error("Failed to create cmark parser");
-		}
-
-		~CMarkRAII() {
-			if (doc)
-				cmark_node_free(doc);
-			if (parser)
-				cmark_parser_free(parser);
-		}
-
-		// Delete copy constructor and assignment
-		CMarkRAII(const CMarkRAII &) = delete;
-		CMarkRAII &operator=(const CMarkRAII &) = delete;
-	};
-
-	CMarkRAII cmark;
+	const CmarkArenaScope arena;
+	cmark_parser *parser = cmark_parser_new_with_mem(CMARK_OPT_DEFAULT, arena.Mem());
 
 	// Parse with cmark-gfm (using content with frontmatter stripped)
-	cmark_parser_feed(cmark.parser, content.data(), content.length());
-	cmark.doc = cmark_parser_finish(cmark.parser);
-	if (!cmark.doc) {
+	cmark_parser_feed(parser, content.data(), content.length());
+	cmark_node *doc = cmark_parser_finish(parser);
+	if (!doc) {
 		throw std::runtime_error("Failed to parse markdown document");
 	}
 
@@ -880,7 +1007,7 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 	std::vector<int32_t> heading_levels; // Track levels for all headings
 
 	// First pass: collect all heading nodes (including those outside min/max range for reference)
-	cmark_node *node = cmark_node_first_child(cmark.doc);
+	cmark_node *node = cmark_node_first_child(doc);
 	while (node) {
 		cmark_node *child = nullptr;
 		if (cmark_node_get_type(node) == CMARK_NODE_HEADING) {
@@ -896,10 +1023,10 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 			node = child;
 			continue;
 		}
-		while (node != cmark.doc && !cmark_node_next(node)) {
+		while (node != doc && !cmark_node_next(node)) {
 			node = cmark_node_parent(node);
 		}
-		node = node == cmark.doc ? nullptr : cmark_node_next(node);
+		node = node == doc ? nullptr : cmark_node_next(node);
 	}
 	std::vector<size_t> open_sections;
 
@@ -978,7 +1105,7 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 			section.end_line = stop_line;
 		} else {
 			// No next heading found — extend to end of document
-			idx_t doc_end = cmark_node_get_end_line(cmark.doc);
+			idx_t doc_end = cmark_node_get_end_line(doc);
 			if (doc_end > section.end_line) {
 				section.end_line = doc_end;
 			}
@@ -1630,24 +1757,24 @@ std::vector<MarkdownBlock> ParseBlocks(std::string_view markdown_str, bool struc
 
 	// Parse with cmark-gfm (with extensions for tables)
 	EnsureCmarkExtensionsRegistered();
-	CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
+	const CmarkArenaScope arena;
+	cmark_parser *parser = cmark_parser_new_with_mem(CMARK_OPT_DEFAULT, arena.Mem());
 
 	// Enable GFM extensions
 	cmark_syntax_extension *table_ext = cmark_find_syntax_extension("table");
 	if (table_ext) {
-		cmark_parser_attach_syntax_extension(parser.get(), table_ext);
+		cmark_parser_attach_syntax_extension(parser, table_ext);
 	}
 
-	cmark_parser_feed(parser.get(), body.data(), body.length());
-	const CmarkDoc doc {cmark_parser_finish(parser.get())};
-	parser.reset();
+	cmark_parser_feed(parser, body.data(), body.length());
+	cmark_node *doc = cmark_parser_finish(parser);
 
 	if (!doc) {
 		return blocks;
 	}
 
 	// Iterate through top-level children of the document
-	cmark_node *child = cmark_node_first_child(doc.get());
+	cmark_node *child = cmark_node_first_child(doc);
 
 	while (child) {
 		cmark_node_type node_type = cmark_node_get_type(child);
@@ -1977,13 +2104,13 @@ std::vector<MarkdownLink> ExtractLinks(const std::string &markdown_str_in) {
 	}
 
 	// Parse with cmark-gfm
-	const CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
-	cmark_parser_feed(parser.get(), markdown_str.c_str(), markdown_str.length());
-	const CmarkDoc doc {cmark_parser_finish(parser.get())};
+	const CmarkArenaScope arena;
+	cmark_parser *parser = cmark_parser_new_with_mem(CMARK_OPT_DEFAULT, arena.Mem());
+	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
+	cmark_node *doc = cmark_parser_finish(parser);
 
 	// Walk the AST looking for link nodes
-	const CmarkIter iter_owner {cmark_iter_new(doc.get())};
-	cmark_iter *iter = iter_owner.get();
+	cmark_iter *iter = cmark_iter_new(doc);
 	cmark_event_type ev_type;
 
 	while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
@@ -2040,13 +2167,13 @@ std::vector<MarkdownImage> ExtractImages(const std::string &markdown_str_in) {
 	const std::string markdown_str = StripFrontmatterKeepLines(markdown_str_in);
 
 	// Parse with cmark-gfm
-	const CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
-	cmark_parser_feed(parser.get(), markdown_str.c_str(), markdown_str.length());
-	const CmarkDoc doc {cmark_parser_finish(parser.get())};
+	const CmarkArenaScope arena;
+	cmark_parser *parser = cmark_parser_new_with_mem(CMARK_OPT_DEFAULT, arena.Mem());
+	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
+	cmark_node *doc = cmark_parser_finish(parser);
 
 	// Walk the AST looking for image nodes
-	const CmarkIter iter_owner {cmark_iter_new(doc.get())};
-	cmark_iter *iter = iter_owner.get();
+	cmark_iter *iter = cmark_iter_new(doc);
 	cmark_event_type ev_type;
 
 	while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
@@ -2107,23 +2234,19 @@ std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str_in) {
 	// line_number is an absolute line in the input -- matching ExtractLinks and
 	// ExtractImages, which also use cmark's native line tracking.
 	EnsureCmarkExtensionsRegistered();
-	CmarkParser parser {cmark_parser_new(CMARK_OPT_DEFAULT)};
-	if (!parser) {
-		return tables;
-	}
+	const CmarkArenaScope arena;
+	cmark_parser *parser = cmark_parser_new_with_mem(CMARK_OPT_DEFAULT, arena.Mem());
 	cmark_syntax_extension *table_ext = cmark_find_syntax_extension("table");
 	if (table_ext) {
-		cmark_parser_attach_syntax_extension(parser.get(), table_ext);
+		cmark_parser_attach_syntax_extension(parser, table_ext);
 	}
-	cmark_parser_feed(parser.get(), markdown_str.c_str(), markdown_str.length());
-	const CmarkDoc doc {cmark_parser_finish(parser.get())};
-	parser.reset();
+	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
+	cmark_node *doc = cmark_parser_finish(parser);
 	if (!doc) {
 		return tables;
 	}
 
-	const CmarkIter iter_owner {cmark_iter_new(doc.get())};
-	cmark_iter *iter = iter_owner.get();
+	cmark_iter *iter = cmark_iter_new(doc);
 	if (!iter) {
 		return tables;
 	}
