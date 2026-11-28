@@ -24,6 +24,14 @@ SELECT content = '| i | s |' || chr(10) || '|---:|---|' || chr(10) || '| 1 | a|b
 true
 
 statement ok
+COPY cells TO '{TEST_DIR}/cells_pipes_only.md' (FORMAT MARKDOWN, escape_newlines false);
+
+query I
+SELECT content = '| i | s |' || chr(10) || '|---:|---|' || chr(10) || '| 1 | a\|b |' || chr(10) || '| 2 | ' || repeat('x', 70) || '\|' || chr(10) || chr(13) || 'z |' || chr(10) || '| 3 | cr' || chr(13) || chr(10) || 'lf |' || chr(10) || '| 4 |  |' || chr(10) || '| 5 | ' || repeat('y', 100) || ' |' || chr(10) FROM read_text('{TEST_DIR}/cells_pipes_only.md');
+----
+true
+
+statement ok
 COPY (SELECT i, repeat('v', 20) AS s FROM range(250000) t(i)) TO '{TEST_DIR}/cells_big.md' (FORMAT MARKDOWN);
 
 query III
