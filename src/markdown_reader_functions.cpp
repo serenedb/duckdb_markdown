@@ -206,10 +206,6 @@ static bool SectionMatchesFilter(const string &section_id, const string &section
 	return false;
 }
 
-//===--------------------------------------------------------------------===//
-// Schemas
-//===--------------------------------------------------------------------===//
-
 static void AddTrailingColumns(const MarkdownReader::MarkdownReadOptions &options, vector<LogicalType> &return_types,
                                vector<CompatName> &names) {
 	// Provenance, trailing. duck_block spec 6.4 puts `filename` after the canonical
@@ -308,10 +304,6 @@ static void MarkdownSchema(MarkdownReadKind kind, const MarkdownReader::Markdown
 	}
 	AddTrailingColumns(options, return_types, names);
 }
-
-//===--------------------------------------------------------------------===//
-// One file
-//===--------------------------------------------------------------------===//
 
 template <MarkdownReadKind KIND>
 static unique_ptr<FunctionData> MarkdownFileBind(ClientContext &context, TableFunctionBindInput &input,
@@ -576,10 +568,6 @@ static void MarkdownFileScan(ClientContext &context, TableFunctionInput &input, 
 	}
 	output.SetChildCardinality(output_idx);
 }
-
-//===--------------------------------------------------------------------===//
-// Files, through the multi-file reader
-//===--------------------------------------------------------------------===//
 
 static TableFunction MarkdownFileFunction(MarkdownReadKind kind) {
 	TableFunction function;
