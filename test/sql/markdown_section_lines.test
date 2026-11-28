@@ -1,0 +1,35 @@
+# name: test/sql/markdown_section_lines.test
+# description: Section lines count from the file's first line, as the extractors' line numbers do
+# group: [sql]
+
+require markdown
+
+query IIII
+SELECT section_id, level, start_line, end_line FROM read_markdown_sections('test/data/sections_frontmatter.md') ORDER BY start_line, level;
+----
+frontmatter	0	1	4
+head	1	6	8
+sub	2	9	14
+empty	1	15	15
+child	2	16	17
+
+query II
+SELECT list_transform(md_extract_sections(content), lambda s: s.start_line), md_extract_code_blocks(content)[1].line_number FROM read_markdown('test/data/sections_frontmatter.md');
+----
+[6, 9, 15, 16]	12
+
+query III
+SELECT section_id, start_line, end_line FROM read_markdown_sections('test/data/sections_frontmatter.md', content_mode := 'full') WHERE level = 1 ORDER BY start_line;
+----
+head	6	14
+empty	15	17
+
+query II
+SELECT s.start_line, s.end_line FROM (SELECT unnest(md_extract_sections(E'---\r\na: 1\r\n---\r\n\r\n# H\r\nx')) AS s);
+----
+5	6
+
+query II
+SELECT s.start_line, s.end_line FROM (SELECT unnest(md_extract_sections(E'# H\nx')) AS s);
+----
+1	2

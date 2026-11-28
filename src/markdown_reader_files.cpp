@@ -299,15 +299,11 @@ MarkdownReader::MarkdownText MarkdownReader::ReadMarkdownFile(ClientContext &con
 
 vector<markdown_utils::MarkdownSection>
 MarkdownReader::ProcessSections(std::string_view content, const MarkdownReadOptions &options, bool include_content) {
-	// Strip frontmatter before parsing - cmark-gfm doesn't understand YAML frontmatter
-	// and will incorrectly interpret --- as setext heading underlines
-	const std::string_view body = markdown_utils::StripFrontmatter(content);
-
 	// Calculate effective max_level based on max_depth
 	// max_depth is relative to min_level (depth 1 = only min_level headings)
 	int32_t effective_max_level = std::min(options.max_level, options.min_level + options.max_depth - 1);
 
-	return markdown_utils::ParseSections(body, options.min_level, effective_max_level, include_content,
+	return markdown_utils::ParseSections(content, options.min_level, effective_max_level, include_content,
 	                                     options.content_mode, options.max_content_length);
 }
 

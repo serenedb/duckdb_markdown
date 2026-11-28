@@ -988,6 +988,7 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 
 	// Strip frontmatter before parsing - cmark-gfm interprets --- as setext heading
 	const std::string_view content = StripFrontmatter(markdown_str);
+	const auto frontmatter_lines = static_cast<idx_t>(std::count(markdown_str.data(), content.data(), '\n'));
 
 	// Default max_content_length for smart mode
 	idx_t effective_max_length = max_content_length > 0 ? max_content_length : 2000;
@@ -1184,6 +1185,8 @@ std::vector<MarkdownSection> ExtractSections(std::string_view markdown_str, int3
 			}
 		}
 
+		section.start_line += frontmatter_lines;
+		section.end_line += frontmatter_lines;
 		sections.push_back(std::move(section));
 		open_sections.push_back(sections.size() - 1);
 	}

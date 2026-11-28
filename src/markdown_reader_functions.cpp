@@ -371,9 +371,8 @@ static void LoadMarkdownFile(ClientContext &context, const MarkdownFileBindData 
 					fm_section.parent_id = "";
 					fm_section.position = 0;
 					fm_section.start_line = 1;
-					// Calculate end line from frontmatter content
-					fm_section.end_line = static_cast<idx_t>(std::count(frontmatter.begin(), frontmatter.end(), '\n') +
-					                                         2); // +2 for --- delimiters
+					fm_section.end_line =
+					    static_cast<idx_t>(std::count(frontmatter.begin(), frontmatter.end(), '\n') + 3);
 					state.sections.push_back(fm_section);
 				}
 			}
