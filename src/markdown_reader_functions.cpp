@@ -358,8 +358,8 @@ static void LoadMarkdownFile(ClientContext &context, const MarkdownFileBindData 
 			state.rows = 1;
 			break;
 		case MarkdownReadKind::SECTIONS: {
-			// Add frontmatter as a special section if extract_metadata is enabled
-			if (options.extract_metadata) {
+			if (options.extract_metadata && options.min_level <= 1 &&
+			    SectionMatchesFilter("frontmatter", "frontmatter", options.section_filter)) {
 				string frontmatter = markdown_utils::ExtractRawFrontmatter(content);
 				if (!frontmatter.empty()) {
 					markdown_utils::MarkdownSection fm_section;

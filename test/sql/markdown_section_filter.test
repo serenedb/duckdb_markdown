@@ -1,5 +1,5 @@
 # name: test/sql/markdown_section_filter.test
-# description: section_filter keeps the named section and its subsections, not other sections whose path is as long as the filter; a filter may name a path suffix, and a list's first fragment filters every file of the list
+# description: section_filter keeps the named section and its subsections, not other sections whose path is as long as the filter; a filter may name a path suffix, and a list's first fragment filters every file of the list; the frontmatter section stays only when the filter names it or there is none, and min_level is 1
 # group: [sql]
 
 require markdown
@@ -57,3 +57,26 @@ SELECT section_id FROM read_markdown_sections(['test/markdown/sections_test.md#d
 datamanager
 initialize-config
 shutdown
+
+query I
+SELECT section_id FROM read_markdown_sections('test/data/sections_frontmatter.md#sub');
+----
+sub
+
+query I
+SELECT section_id FROM read_markdown_sections('test/data/sections_frontmatter.md', section_filter := 'frontmatter');
+----
+frontmatter
+
+query I
+SELECT section_id FROM read_markdown_sections('test/data/sections_frontmatter.md', min_level := 2) ORDER BY start_line;
+----
+sub
+child
+
+query I
+SELECT section_id FROM read_markdown_sections('test/data/sections_frontmatter.md', max_level := 1) ORDER BY start_line;
+----
+frontmatter
+head
+empty

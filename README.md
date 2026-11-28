@@ -182,6 +182,7 @@ Reads Markdown files and parses them into hierarchical sections.
 - When `extract_metadata := true`, the frontmatter block is included as a special section with `level=0`, `section_id='frontmatter'`, and the **raw, unparsed** text between the `---` (or `+++`) delimiters as the content. This `level` is heading **rank** (0 for frontmatter, 1-6 for headings) and is a different measurement from `read_markdown_blocks`' `level`, which is structural **depth** and is 1 for every top-level element including frontmatter. Nothing in this extension interprets that text as YAML — see [Frontmatter Handling](#frontmatter-handling).
 - The `section_path` column provides hierarchical navigation paths like `"parent/child/grandchild"`.
 - Fragment syntax `'file.md#section-id'` returns the matching section and all its descendants.
+- The frontmatter section is left out when `section_filter` (or a fragment) names another section, or `min_level` is above 1.
 
 ### Content Extraction Functions
 
