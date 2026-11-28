@@ -238,15 +238,19 @@ unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, Copy
 // Initialize Global
 //===--------------------------------------------------------------------===//
 
-unique_ptr<GlobalFunctionData> MarkdownCopyFunction::InitializeGlobal(ClientContext &context, FunctionData &bind_data,
+unique_ptr<GlobalFunctionData> MarkdownCopyFunction::InitializeGlobal(ClientContext &context, FunctionData &bind_data_p,
                                                                       const string &file_path) {
-	auto result = make_uniq<WriteMarkdownGlobalState>();
-	auto &fs = FileSystem::GetFileSystem(context);
-
-	// Open file for writing
-	result->handle =
-	    fs.OpenFile(file_path, FileOpenFlags::FILE_FLAGS_WRITE | FileOpenFlags::FILE_FLAGS_FILE_CREATE_NEW);
-
+	auto &bind_data = bind_data_p.Cast<WriteMarkdownBindData>();
+	auto result = make_uniq<WriteMarkdownGlobalState>(context, file_path);
+	string head;
+	if (bind_data.markdown_mode == WriteMarkdownBindData::MarkdownMode::TABLE) {
+		if (bind_data.header) {
+			head = RenderTableHeader(bind_data) + RenderTableSeparator(bind_data);
+		}
+	} else if (!bind_data.frontmatter.empty()) {
+		head = RenderFrontmatter(bind_data);
+	}
+	result->file.WriteFrame(const_data_ptr_cast(head.data()), head.size());
 	return std::move(result);
 }
 
@@ -521,7 +525,7 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 		}
 	}
 	if (lstate.buffer.size() >= WRITE_BUFFER_BYTES) {
-		WriteBuffer(bind_data, gstate, lstate);
+		WriteBuffer(gstate, lstate);
 	}
 }
 
@@ -531,7 +535,6 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 
 void MarkdownCopyFunction::Combine(ExecutionContext &context, FunctionData &bind_data_p, GlobalFunctionData &gstate_p,
                                    LocalFunctionData &lstate_p) {
-	auto &bind_data = bind_data_p.Cast<WriteMarkdownBindData>();
 	auto &gstate = gstate_p.Cast<WriteMarkdownGlobalState>();
 	auto &lstate = lstate_p.Cast<WriteMarkdownLocalState>();
 
@@ -546,35 +549,14 @@ void MarkdownCopyFunction::Combine(ExecutionContext &context, FunctionData &bind
 		lstate.elements.clear();
 	}
 
-	WriteBuffer(bind_data, gstate, lstate);
+	WriteBuffer(gstate, lstate);
 }
 
-void MarkdownCopyFunction::WriteBuffer(const WriteMarkdownBindData &bind_data, WriteMarkdownGlobalState &gstate,
-                                       WriteMarkdownLocalState &lstate) {
+void MarkdownCopyFunction::WriteBuffer(WriteMarkdownGlobalState &gstate, WriteMarkdownLocalState &lstate) {
 	if (lstate.buffer.empty()) {
 		return;
 	}
-
-	lock_guard<mutex> lock(gstate.write_lock);
-
-	// Write header/frontmatter if not yet written
-	if (bind_data.markdown_mode == WriteMarkdownBindData::MarkdownMode::TABLE) {
-		if (!gstate.header_written && bind_data.header) {
-			string header_content = RenderTableHeader(bind_data);
-			header_content += RenderTableSeparator(bind_data);
-			gstate.handle->Write(header_content.data(), header_content.size());
-			gstate.header_written = true;
-		}
-	} else {
-		if (!gstate.frontmatter_written && !bind_data.frontmatter.empty()) {
-			string fm_content = RenderFrontmatter(bind_data);
-			gstate.handle->Write(fm_content.data(), fm_content.size());
-			gstate.frontmatter_written = true;
-		}
-	}
-
-	// Write buffered data
-	gstate.handle->Write(lstate.buffer.data(), lstate.buffer.size());
+	gstate.file.WriteRows(const_data_ptr_cast(lstate.buffer.data()), lstate.buffer.size());
 	lstate.buffer.clear();
 }
 
@@ -583,26 +565,7 @@ void MarkdownCopyFunction::WriteBuffer(const WriteMarkdownBindData &bind_data, W
 //===--------------------------------------------------------------------===//
 
 void MarkdownCopyFunction::Finalize(ClientContext &context, FunctionData &bind_data_p, GlobalFunctionData &gstate_p) {
-	auto &bind_data = bind_data_p.Cast<WriteMarkdownBindData>();
-	auto &gstate = gstate_p.Cast<WriteMarkdownGlobalState>();
-
-	// If no data was written but we need a header (empty table case)
-	if (bind_data.markdown_mode == WriteMarkdownBindData::MarkdownMode::TABLE) {
-		if (!gstate.header_written && bind_data.header) {
-			string header_content = RenderTableHeader(bind_data);
-			header_content += RenderTableSeparator(bind_data);
-			gstate.handle->Write(header_content.data(), header_content.size());
-		}
-	} else {
-		if (!gstate.frontmatter_written && !bind_data.frontmatter.empty()) {
-			string fm_content = RenderFrontmatter(bind_data);
-			gstate.handle->Write(fm_content.data(), fm_content.size());
-		}
-	}
-
-	// Sync and close
-	gstate.handle->Sync();
-	gstate.handle->Close();
+	gstate_p.Cast<WriteMarkdownGlobalState>().file.Close();
 }
 
 //===--------------------------------------------------------------------===//

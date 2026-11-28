@@ -4,6 +4,7 @@
 #include "duckdb_compat.hpp"
 #include "duckdb/function/copy_function.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/formats/copy_file_writer.hpp"
 #include "duckdb/formats/csv_encoder.hpp"
 #include <string>
 #include <vector>
@@ -63,14 +64,11 @@ public:
 //===--------------------------------------------------------------------===//
 
 struct WriteMarkdownGlobalState : public GlobalFunctionData {
-	//! File handle for writing
-	unique_ptr<FileHandle> handle;
-	//! Lock for thread-safe writes
-	mutex write_lock;
-	//! Whether the header has been written (table mode)
-	bool header_written = false;
-	//! Whether frontmatter has been written (document mode)
-	bool frontmatter_written = false;
+	WriteMarkdownGlobalState(ClientContext &context, const string &file_path)
+	    : file(context, file_path, FileCompressionType::UNCOMPRESSED, string()) {
+	}
+
+	CopyFileWriter file;
 };
 
 //===--------------------------------------------------------------------===//
@@ -175,8 +173,7 @@ private:
 	static void AppendTableRows(WriteMarkdownLocalState &lstate, const vector<UnifiedVectorFormat> &columns,
 	                            idx_t count, const WriteMarkdownBindData &bind_data);
 
-	static void WriteBuffer(const WriteMarkdownBindData &bind_data, WriteMarkdownGlobalState &gstate,
-	                        WriteMarkdownLocalState &lstate);
+	static void WriteBuffer(WriteMarkdownGlobalState &gstate, WriteMarkdownLocalState &lstate);
 
 	//===--------------------------------------------------------------------===//
 	// Document Mode Helpers
