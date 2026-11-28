@@ -375,7 +375,7 @@ static void LoadMarkdownFile(ClientContext &context, const MarkdownFileBindData 
 					fm_section.section_path = "frontmatter";
 					fm_section.level = 0; // Special level for frontmatter
 					fm_section.title = "frontmatter";
-					fm_section.content = frontmatter;
+					fm_section.content = options.include_content ? frontmatter : string();
 					fm_section.parent_id = "";
 					fm_section.position = 0;
 					fm_section.start_line = 1;

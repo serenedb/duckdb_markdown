@@ -325,3 +325,10 @@ ORDER BY section.start_line;
 ----
 main	1
 sub	2
+
+query III
+SELECT section_id, content, start_line FROM read_markdown_sections('test/data/sections_frontmatter.md', include_content := false) WHERE level < 2 ORDER BY start_line;
+----
+frontmatter	(empty)	1
+head	(empty)	6
+empty	(empty)	15
