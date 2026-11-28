@@ -1,0 +1,60 @@
+# name: test/sql/markdown_copy_cell_types.test
+# description: A table cell holds the VARCHAR text of its value for every type, at the edges of each type and for NULL
+# group: [sql]
+
+require markdown
+
+statement ok
+CREATE TABLE vals (ord INTEGER, b BOOLEAN, i8 TINYINT, i16 SMALLINT, i32 INTEGER, i64 BIGINT, u8 UTINYINT, u16 USMALLINT, u32 UINTEGER, u64 UBIGINT, d16 DECIMAL(4,1), d32 DECIMAL(9,4), d64 DECIMAL(18,18), d64s0 DECIMAL(18,0), d128 DECIMAL(38,10), dt DATE, t TIME, tns TIME_NS, ts TIMESTAMP, tsns TIMESTAMP_NS, iv INTERVAL, u UUID, h HUGEINT, f DOUBLE, s VARCHAR);
+
+statement ok
+INSERT INTO vals VALUES
+(1, false, -128, -32768, -2147483648, -9223372036854775808, 0, 0, 0, 0, -999.9, -99999.9999, -0.999999999999999999, -999999999999999999, -9999999999999999999999999999.9999999999, '-infinity', '00:00:00', '00:00:00', '-infinity', '1677-09-22 00:00:00', '-1 year -2 months -3 days -04:05:06.789', '00000000-0000-0000-0000-000000000000', -170141183460469231731687303715884105728, -1e308, 'a|b'),
+(2, true, 127, 32767, 2147483647, 9223372036854775807, 255, 65535, 4294967295, 18446744073709551615, 999.9, 99999.9999, 0.999999999999999999, 999999999999999999, 9999999999999999999999999999.9999999999, 'infinity', '23:59:59.999999', '23:59:59.999999999', 'infinity', '2262-04-11 23:47:16.854775806', '178000000 years', 'ffffffff-ffff-ffff-ffff-ffffffffffff', 170141183460469231731687303715884105727, 1e308, 'x'),
+(3, true, 0, -1, 7, -42, 10, 100, 1000, 10000000000, -0.5, 0.0001, 0.000000000000000001, 0, -0.0000000001, '0044-03-15 (BC)', '12:34:56.5', '12:34:56.000000001', '0044-03-15 (BC) 12:00:00.123', '2024-01-02 03:04:05.000006007', '1 day 00:00:00.000001', '12345678-9abc-def0-1234-56789abcdef0', 0, 0.1, ''),
+(4, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+statement ok
+COPY (SELECT * FROM vals ORDER BY ord) TO '{TEST_DIR}/typed.md' (FORMAT MARKDOWN, header false);
+
+statement ok
+COPY (SELECT COLUMNS(*)::VARCHAR FROM vals ORDER BY ord) TO '{TEST_DIR}/texts.md' (FORMAT MARKDOWN, header false);
+
+query III
+SELECT typed.content = texts.content,
+       typed.content LIKE '| 1 | false | -128 | -32768 | -2147483648 | -9223372036854775808 | 0 | 0 | 0 | 0 | -999.9 | -99999.9999 | -0.999999999999999999 | -999999999999999999 | %',
+       typed.content LIKE '%| 3 | true | 0 | -1 | 7 | -42 | 10 | 100 | 1000 | 10000000000 | -0.5 | 0.0001 | 0.000000000000000001 | 0 | -0.0000000001 | 0044-03-15 (BC) | 12:34:56.5 | 12:34:56.000000001 | 0044-03-15 (BC) 12:00:00.123 | 2024-01-02 03:04:05.000006007 | 1 day 00:00:00.000001 | 12345678-9abc-def0-1234-56789abcdef0 | 0 | 0.1 |  |%'
+FROM read_text('{TEST_DIR}/typed.md') typed, read_text('{TEST_DIR}/texts.md') texts;
+----
+true	true	true
+
+statement ok
+COPY (SELECT * FROM vals ORDER BY ord) TO '{TEST_DIR}/typed_null.md' (FORMAT MARKDOWN, header false, null_value 'a|b');
+
+query I
+SELECT ends_with(content, chr(10) || '| 4 |' || repeat(' a\|b |', 24) || chr(10))
+FROM read_text('{TEST_DIR}/typed_null.md');
+----
+true
+
+statement ok
+CREATE TABLE cast_vals (ord INTEGER, uh UHUGEINT, f FLOAT, ttz TIMETZ, tss TIMESTAMP_S, tsms TIMESTAMP_MS, tstz TIMESTAMPTZ, tstzns TIMESTAMPTZ_NS);
+
+statement ok
+INSERT INTO cast_vals VALUES
+(1, 0, -3.4e38, '00:00:00+15:59', '1677-09-22 00:00:00', '1677-09-22 00:00:00.001', '-infinity', '1677-09-22 00:00:00+00'),
+(2, 340282366920938463463374607431768211455, 3.4e38, '23:59:59.999999-15:59', '2262-04-11 23:47:16', '2262-04-11 23:47:16.854', 'infinity', '2262-04-11 23:47:16.854775806+00'),
+(3, 42, 0.1, '12:34:56.5+02', '2024-01-02 03:04:05', '2024-01-02 03:04:05.123', '2024-01-02 03:04:05.123456+00', '2024-01-02 03:04:05.000006007+00'),
+(4, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+statement ok
+COPY (SELECT * FROM cast_vals ORDER BY ord) TO '{TEST_DIR}/cast_typed.md' (FORMAT MARKDOWN, header false);
+
+statement ok
+COPY (SELECT COLUMNS(*)::VARCHAR FROM cast_vals ORDER BY ord) TO '{TEST_DIR}/cast_texts.md' (FORMAT MARKDOWN, header false);
+
+query II
+SELECT typed.content = texts.content, typed.content LIKE '%| 3 | 42 | 0.1 | 12:34:56.5+02 | 2024-01-02 03:04:05 | 2024-01-02 03:04:05.123 | %'
+FROM read_text('{TEST_DIR}/cast_typed.md') typed, read_text('{TEST_DIR}/cast_texts.md') texts;
+----
+true	true

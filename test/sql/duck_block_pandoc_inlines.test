@@ -1,0 +1,41 @@
+# name: test/sql/duck_block_pandoc_inlines.test
+# description: JSON-encoded blocks render Pandoc math, images, strikeout, super- and subscripts, breaks, spans, small caps, quotes and citations, and skip inline nodes they cannot read
+# group: [sql]
+
+require markdown
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[{"t":"Para","c":[{"t":"Str","c":"E"},{"t":"Space"},{"t":"Str","c":"="},{"t":"Space"},{"t":"Math","c":[{"t":"InlineMath"},"mc^2"]}]}]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'> E = $mc^2$\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[{"t":"Para","c":[{"t":"Image","c":[["",[],[]],[{"t":"Str","c":"A"},{"t":"Space"},{"t":"Str","c":"duck"}],["duck.png",""]]}]}]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'> ![A duck](duck.png)\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[{"t":"Plain","c":[{"t":"Strikeout","c":[{"t":"Str","c":"old"}]},{"t":"SoftBreak"},{"t":"Str","c":"x"},{"t":"Superscript","c":[{"t":"Str","c":"2"}]},{"t":"LineBreak"},{"t":"Str","c":"H"},{"t":"Subscript","c":[{"t":"Str","c":"2"}]},{"t":"Str","c":"O"}]}]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'> ~~old~~ x^2^\n> H~2~O\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[{"t":"Para","c":[{"t":"Span","c":[["",[],[]],[{"t":"Str","c":"span"}]]},{"t":"Space"},{"t":"SmallCaps","c":[{"t":"Str","c":"caps"}]},{"t":"Space"},{"t":"Quoted","c":[{"t":"DoubleQuote"},[{"t":"Str","c":"quoted"}]]},{"t":"Space"},{"t":"Cite","c":[[{"citationId":"doe99","citationPrefix":[],"citationSuffix":[],"citationMode":{"t":"NormalCitation"},"citationNoteNum":1,"citationHash":0}],[{"t":"Str","c":"[@doe99]"}]]},{"t":"RawInline","c":["html","<br>"]}]}]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'> span caps quoted [@doe99]\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[{"t":"Para","c":[{"t":"Str","c":"a"},{"t":"Str"},{"t":"Str","c":["x"]},{"t":1,"c":"x"},{"c":"no tag"},{"t":"Code"},{"t":"Code","c":"x"},{"t":"Code","c":[["",[],[]]]},{"t":"Code","c":[["",[],[]],1]},{"t":"Math"},{"t":"Math","c":"x"},{"t":"Math","c":[{"t":"InlineMath"}]},{"t":"Math","c":[{"t":"InlineMath"},1]},{"t":"Str","c":"b"},null,1,true]}]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'> ab\n\n';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'list', content: '[[{"t":"Plain","c":[{"t":"Link"}]}],[{"t":"Plain","c":[{"t":"Link","c":"x"}]}],[{"t":"Plain","c":[{"t":"Link","c":[["",[],[]],[{"t":"Str","c":"t"}]]}]}],[{"t":"Plain","c":[{"t":"Link","c":[["",[],[]],[{"t":"Str","c":"no url"}],"u"]}]}],[{"t":"Plain","c":[{"t":"Link","c":[["",[],[]],[{"t":"Str","c":"empty"}],[]]}]}],[{"t":"Plain","c":[{"t":"Link","c":[["",[],[]],[{"t":"Str","c":"num"}],[1,""]]}]}],[{"t":"Plain","c":[{"t":"Image"}]}],[{"t":"Plain","c":[{"t":"Image","c":"x"}]}],[{"t":"Plain","c":[{"t":"Image","c":[["",[],[]],[]]}]}],[{"t":"Plain","c":[{"t":"Image","c":[["",[],[]],[{"t":"Str","c":"alt"}],"src"]}]}],[{"t":"Plain","c":[{"t":"Image","c":[["",[],[]],[{"t":"Str","c":"e"}],[]]}]}],[{"t":"Plain","c":[{"t":"Image","c":[["",[],[]],[],[1,""]]}]}]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0})
+     = E'- [no url]()\n- [empty]()\n- [num]()\n- ![alt]()\n- ![e]()\n- ![]()\n\n';
+----
+true

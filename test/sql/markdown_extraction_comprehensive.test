@@ -532,6 +532,17 @@ SELECT md_section_breadcrumb(E'# Root\n\n## Branch A\n\n### Leaf A1\n\n## Branch
 ----
 Root > Branch A > Leaf A1
 
+query II
+SELECT function_name, description FROM duckdb_functions() WHERE function_name IN ('md_section_breadcrumb', 'md_valid') ORDER BY function_name;
+----
+md_section_breadcrumb	The titles from the top-level section down to the section with this id in the Markdown document, joined by ' > '.
+md_valid	False for an empty string and true for any other: every text is a valid CommonMark document.
+
+query I
+SELECT md_section_breadcrumb(E'# Guide\n## Install', 'install');
+----
+Guide > Install
+
 #===================================================================
 # Test 15: Reference Link Detection
 #===================================================================

@@ -1,0 +1,54 @@
+# name: test/sql/read_markdown_mapped_file.test
+# description: A file of 2 MiB and more is read in place: its documents, sections and blocks read as those of a small file do, and its line endings are normalized in a copy
+# group: [sql]
+
+require markdown
+
+statement ok
+COPY (SELECT repeat(E'# Title\n\nSome *text* here.\n\n## Sub\n\nmore\n\n', 60000) AS md)
+TO '{TEST_DIR}/mapped.md' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement ok
+COPY (SELECT repeat(E'# Title\r\n\r\nSome *text* here.\r\n\r\n## Sub\r\n\r\nmore\r\n\r\n', 60000) AS md)
+TO '{TEST_DIR}/mapped_crlf.md' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query III
+SELECT count(*), sum(length(content)), starts_with(min(content), E'# Title\n\nSome *text* here.\n\n## Sub\n\nmore\n\n# Title')
+FROM read_markdown('{TEST_DIR}/mapped.md', maximum_file_size = 10000000);
+----
+1	2520001	true
+
+query III
+SELECT sum(length(content)), bool_and(content NOT LIKE E'%\r%'), bool_and(starts_with(content, E'# Title\n\nSome *text* here.\n\n## Sub\n\nmore\n\n# Title'))
+FROM read_markdown('{TEST_DIR}/mapped_crlf.md', maximum_file_size = 10000000);
+----
+2520001	true	true
+
+query I
+SELECT sum(length(content)) FROM read_markdown('{TEST_DIR}/mapped_crlf.md', maximum_file_size = 10000000, normalize_content = false);
+----
+3000001
+
+query I
+SELECT count(*) FROM read_markdown_sections('{TEST_DIR}/mapped.md', maximum_file_size = 10000000);
+----
+120000
+
+query IIII
+SELECT count(*), count(DISTINCT section_id), sum(length(content)), count(*) FILTER (WHERE level = 2 AND parent_id IS NULL)
+FROM read_markdown_sections('{TEST_DIR}/mapped_crlf.md', maximum_file_size = 10000000);
+----
+120000	120000	1380000	0
+
+query III
+SELECT section_id, parent_id, section_path FROM read_markdown_sections('{TEST_DIR}/mapped.md', maximum_file_size = 10000000)
+ORDER BY start_line DESC LIMIT 2;
+----
+sub-1-59998	title-1-59998	title-1-59998/sub-1-59998
+title-1-59998	NULL	title-1-59998
+
+query II
+SELECT count(*), count(*) FILTER (WHERE element_type = 'heading')
+FROM read_markdown_blocks('{TEST_DIR}/mapped.md', maximum_file_size = 10000000);
+----
+420000	120000

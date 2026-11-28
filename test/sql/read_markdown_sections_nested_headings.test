@@ -1,0 +1,19 @@
+# name: test/sql/read_markdown_sections_nested_headings.test
+# description: Headings inside block quotes and list items are sections too, each the child of the nearest shallower heading before it
+# group: [sql]
+
+require markdown
+
+statement ok
+COPY (SELECT E'# Top\n\n> ## Quoted\n>\n> text\n\n- item\n\n  ### In item\n\n  more\n\n## Second **bold** `code`\n\n> > #### Deep quote\n\n# Last\n' AS md)
+TO '{TEST_DIR}/nested_headings.md' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query IIIIII
+SELECT section_id, level, title, parent_id, section_path, start_line FROM read_markdown_sections('{TEST_DIR}/nested_headings.md') ORDER BY start_line;
+----
+top	1	Top	NULL	top	1
+quoted	2	Quoted	top	top/quoted	3
+in-item	3	In item	quoted	top/quoted/in-item	9
+second-bold-code	2	Second bold code	top	top/second-bold-code	13
+deep-quote	4	Deep quote	second-bold-code	top/second-bold-code/deep-quote	15
+last	1	Last	NULL	last	17

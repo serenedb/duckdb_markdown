@@ -150,6 +150,16 @@ SELECT metadata['title'] FROM read_markdown('test/markdown/metadata.md', extract
 ----
 Test Document
 
+query T
+SELECT column_name FROM (DESCRIBE SELECT * FROM read_markdown('test/markdown/metadata.md', extract_metadata := false));
+----
+content
+
+query I
+SELECT content LIKE '%title: Test Document%' FROM read_markdown('test/markdown/metadata.md', extract_metadata := false);
+----
+true
+
 # =============================================================================
 # Test: Edge cases for section_path hierarchy
 # =============================================================================

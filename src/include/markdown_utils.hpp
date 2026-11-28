@@ -63,11 +63,11 @@ std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavo
 std::string MarkdownToText(const std::string &markdown_str);
 
 // Extract frontmatter metadata
-MarkdownMetadata ExtractMetadata(const std::string &markdown_str);
+MarkdownMetadata ExtractMetadata(std::string_view markdown_str);
 
 // Extract raw frontmatter YAML content (without --- delimiters)
 // Returns empty string if no frontmatter found
-std::string ExtractRawFrontmatter(const std::string &markdown_str);
+std::string ExtractRawFrontmatter(std::string_view markdown_str);
 
 // Strip frontmatter from markdown content, returning only the body
 // This is needed because cmark-gfm doesn't understand YAML frontmatter
@@ -96,7 +96,7 @@ std::string StripFrontmatterKeepLines(const std::string &markdown_str);
 //
 // word_count, char_count, line_count and reading_time_minutes are textual
 // measures with no AST counterpart and are identical under both.
-MarkdownStats CalculateStats(const std::string &markdown_str, bool exact = false);
+MarkdownStats CalculateStats(std::string_view markdown_str, bool exact = false);
 
 //===--------------------------------------------------------------------===//
 // Section Parsing
@@ -145,7 +145,8 @@ struct MarkdownBlock {
 // blocks (bold/italic/code/link/text at level+1) instead of markdown-in-content;
 // a block whose inline content is a single plain-text run keeps that text in
 // `content` (per the duck_blocks spec's content rules).
-std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool structured_inlines = false);
+std::vector<MarkdownBlock> ParseBlocks(std::string_view markdown_str, bool structured_inlines = false,
+                                       bool with_frontmatter = true);
 
 //===--------------------------------------------------------------------===//
 // Content Extraction
@@ -270,7 +271,7 @@ std::string GenerateBreadcrumb(const std::string &markdown_content, const std::s
 bool ValidateInternalLink(const std::string &markdown_str, const std::string &link_target);
 
 // Normalize Markdown content
-std::string NormalizeMarkdown(const std::string &markdown_str);
+std::string NormalizeMarkdown(std::string_view markdown_str);
 
 } // namespace markdown_utils
 

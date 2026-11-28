@@ -1,0 +1,82 @@
+# name: test/sql/markdown_section_filter.test
+# description: section_filter keeps the named section and its subsections, not other sections whose path is as long as the filter; a filter may name a path suffix, and a list's first fragment filters every file of the list; the frontmatter section stays only when the filter names it or there is none, and min_level is 1
+# group: [sql]
+
+require markdown
+
+statement ok
+COPY (SELECT E'# Usage\n\nuse it\n\n## Flags\n\nflags\n\n# Guide\n\nread it\n\n# Other\n\nmore' AS md)
+TO '{TEST_DIR}/section_filter.md' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query II
+SELECT section_id, title FROM read_markdown_sections('{TEST_DIR}/section_filter.md') ORDER BY section_id;
+----
+flags	Flags
+guide	Guide
+other	Other
+usage	Usage
+
+query II
+SELECT section_id, title FROM read_markdown_sections('{TEST_DIR}/section_filter.md', section_filter := 'usage') ORDER BY section_id;
+----
+flags	Flags
+usage	Usage
+
+query II
+SELECT section_id, title FROM read_markdown_sections('{TEST_DIR}/section_filter.md', section_filter := 'flags');
+----
+flags	Flags
+
+query II
+SELECT section_id, title FROM read_markdown_sections('{TEST_DIR}/section_filter.md#guide');
+----
+guide	Guide
+
+query I
+SELECT count(*) FROM read_markdown_sections('{TEST_DIR}/section_filter.md', section_filter := 'missing');
+----
+0
+
+query T
+SELECT section_id FROM read_markdown_sections('test/markdown/sections_test.md', section_filter := 'classes/datamanager') ORDER BY start_line;
+----
+datamanager
+initialize-config
+shutdown
+
+query T
+SELECT section_id FROM read_markdown_sections('test/markdown/sections_test.md#classes/datamanager') ORDER BY start_line;
+----
+datamanager
+initialize-config
+shutdown
+
+query T
+SELECT section_id FROM read_markdown_sections(['test/markdown/sections_test.md#datamanager', 'test/markdown/simple.md']) ORDER BY section_id;
+----
+datamanager
+initialize-config
+shutdown
+
+query I
+SELECT section_id FROM read_markdown_sections('test/data/sections_frontmatter.md#sub');
+----
+sub
+
+query I
+SELECT section_id FROM read_markdown_sections('test/data/sections_frontmatter.md', section_filter := 'frontmatter');
+----
+frontmatter
+
+query I
+SELECT section_id FROM read_markdown_sections('test/data/sections_frontmatter.md', min_level := 2) ORDER BY start_line;
+----
+sub
+child
+
+query I
+SELECT section_id FROM read_markdown_sections('test/data/sections_frontmatter.md', max_level := 1) ORDER BY start_line;
+----
+frontmatter
+head
+empty

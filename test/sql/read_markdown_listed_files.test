@@ -1,0 +1,21 @@
+# name: test/sql/read_markdown_listed_files.test
+# description: A listed file that is not Markdown is refused, or skipped with a warning under ignore_errors
+# group: [sql]
+
+require markdown
+
+statement ok
+COPY (SELECT E'# Title\n\ntext\n' AS md) TO '{TEST_DIR}/listed.md' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement ok
+COPY (SELECT 'plain' AS t) TO '{TEST_DIR}/listed.txt' (FORMAT csv, HEADER false);
+
+statement error
+SELECT count(*) FROM read_markdown(['{TEST_DIR}/listed.md', '{TEST_DIR}/listed.txt']);
+----
+File is not a markdown file
+
+query I
+SELECT count(*) FROM read_markdown(['{TEST_DIR}/listed.md', '{TEST_DIR}/listed.txt'], ignore_errors = true);
+----
+1

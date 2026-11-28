@@ -120,6 +120,7 @@ static bool MarkdownToVarcharCast(Vector &source, Vector &result, idx_t count, C
 static bool DuckBlockListToMarkdownCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	// Cast LIST(duck_block) to markdown
 	// duck_block struct: kind, element_type, content, level, encoding, attributes, element_order
+	JSONTreeParser parser;
 	for (idx_t i = 0; i < count; i++) {
 		auto list_value = source.GetValue(i);
 
@@ -128,7 +129,7 @@ static bool DuckBlockListToMarkdownCast(Vector &source, Vector &result, idx_t co
 			continue;
 		}
 
-		string markdown = DuckBlockFunctions::RenderDuckBlocksToMarkdown(list_value);
+		string markdown = DuckBlockFunctions::RenderDuckBlocksToMarkdown(parser, list_value);
 		result.SetValue(i, Value(markdown));
 	}
 

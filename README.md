@@ -111,10 +111,11 @@ Reads Markdown files and returns one row per file.
 - `content_as_varchar := false` - Return content as VARCHAR instead of MARKDOWN type
 - `maximum_file_size := 16777216` - Maximum file size in bytes (16MB default)
 - `extract_metadata := true` - Extract frontmatter into the `metadata` column. This uses the same **line-split key/value** reader as [`md_extract_metadata`](#content-extraction-functions) — each line split on the first `:` (or the first `=` inside a `+++` TOML block), typed as `MAP(VARCHAR, VARCHAR)` — **not** a full YAML parser (nested maps, lists, and multiline `|`/`>` scalars are not interpreted). For real YAML, use the `yaml` extension's `read_yaml_frontmatter` — see [Frontmatter Handling](#frontmatter-handling).
+- `include_stats := false` - Add a `stats` column after `metadata`: the document's statistics, as `md_stats(content)` gives them
 - `normalize_content := true` - Normalize Markdown content
 - `extract_extensions := NULL` - Opt-in add-on extractors (comma-separated VARCHAR; see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds `wikilinks` and/or `tags` `LIST<STRUCT>` columns to the output
 
-**Returns:** `(content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` or `(content MARKDOWN, metadata MAP(VARCHAR, VARCHAR), filename VARCHAR)` with `filename := true` -- provenance is appended, never prepended. With `extract_extensions`, the requested add-on columns are appended.
+**Returns:** `(content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` or `(content MARKDOWN, metadata MAP(VARCHAR, VARCHAR), filename VARCHAR)` with `filename := true` -- provenance is appended, never prepended. With `include_stats := true`, `stats` follows `metadata`. With `extract_extensions`, the requested add-on columns are appended.
 
 #### `read_markdown_blocks(files, [parameters...])`
 Reads Markdown files and parses them into block-level elements (headings, paragraphs, code blocks, lists, tables, etc.).
@@ -123,6 +124,7 @@ Reads Markdown files and parses them into block-level elements (headings, paragr
 - `files` (required) - File path, glob pattern, or list of patterns
 - `filename := false` - Append a trailing `filename` column naming the source file (deprecated alias: `include_filepath`). Boolean only: the string form that renames the column is deliberately not accepted, because a renamed column produces a struct no duck_block consumer accepts.
 - `extract_extensions := NULL` - Opt-in add-on extractors (see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds per-block `wikilinks` and/or `tags` columns extracted from each block's content.
+- `extract_metadata := true` - Emit the frontmatter as its `metadata` block; `false` leaves it out, and `element_order` counts the body's blocks from 0.
 
 **Returns:** `(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)`. `level` is structural **depth**, minimum 1 — a heading's rank is `attributes['heading_level']`, not `level`. A heading carries both a flattened plain-text title in `content` (what `section_id` and the sections API read) and its formatted text as inline children, so `# **Bold** t` keeps its emphasis instead of collapsing to `# Bold t`. (`read_markdown_sections` has a `level` column too, but that one is heading rank, 0-6.) With `extract_extensions`, the requested add-on columns are appended.
 
@@ -165,7 +167,8 @@ Reads Markdown files and parses them into hierarchical sections.
 - `content_mode := 'minimal'` - Content extraction mode (see below)
 - `max_depth := 6` - Maximum depth relative to min_level (e.g., `max_depth := 2` with `min_level := 1` includes h1 and h2 only)
 - `max_content_length := 0` - Maximum content length for 'smart' mode (0 = auto, uses 2000 chars)
-- `include_empty_sections := false` - Include sections without content
+- `include_empty_sections := true` - Include sections without content; `false` leaves out every section whose content is empty, such as a heading followed directly by another in `minimal` mode
+- `include_stats := false` - Add a `stats` column after `end_line`: each section's statistics, as `md_stats(content)` gives them
 - `filename := false` - Append a trailing `filename` column naming the source file (deprecated alias: `include_filepath`). Boolean only: the string form that renames the column is deliberately not accepted, because a renamed column produces a struct no duck_block consumer accepts.
 - `extract_metadata := true` - Include frontmatter as a special section (level=0)
 - `extract_extensions := NULL` - Opt-in add-on extractors (see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds per-section `wikilinks` and/or `tags` columns extracted from each section's content.
@@ -176,12 +179,13 @@ Reads Markdown files and parses them into hierarchical sections.
 - `'full'` - Content includes all subsections until next same-or-higher level heading. Use this for complete section extraction.
 - `'smart'` - Adaptive mode: includes small subsections fully, truncates large ones with references like `"... (see #subsection-id)"`.
 
-**Returns:** `(section_id VARCHAR, section_path VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` or with `filename := true` appends a trailing `filename VARCHAR` column.
+**Returns:** `(section_id VARCHAR, section_path VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` or with `filename := true` appends a trailing `filename VARCHAR` column. With `include_stats := true`, `stats` follows `end_line`. `start_line` and `end_line` count from the file's first line, frontmatter included, as the extractors' `line_number` does.
 
 **Notes:**
 - When `extract_metadata := true`, the frontmatter block is included as a special section with `level=0`, `section_id='frontmatter'`, and the **raw, unparsed** text between the `---` (or `+++`) delimiters as the content. This `level` is heading **rank** (0 for frontmatter, 1-6 for headings) and is a different measurement from `read_markdown_blocks`' `level`, which is structural **depth** and is 1 for every top-level element including frontmatter. Nothing in this extension interprets that text as YAML — see [Frontmatter Handling](#frontmatter-handling).
 - The `section_path` column provides hierarchical navigation paths like `"parent/child/grandchild"`.
 - Fragment syntax `'file.md#section-id'` returns the matching section and all its descendants.
+- The frontmatter section is left out when `section_filter` (or a fragment) names another section, or `min_level` is above 1.
 
 ### Content Extraction Functions
 
@@ -229,7 +233,7 @@ Available tokens: `wikilinks`, `tags`, and the `obsidian` flavor (= both). Unkno
 
 - **`md_to_html(markdown)`** - Convert markdown content to HTML
 - **`md_to_text(markdown)`** - Convert markdown to plain text (useful for full-text search)
-- **`md_valid(markdown)`** - Validate markdown content and return boolean
+- **`md_valid(markdown)`** - `false` for an empty string and `true` for any other: every text is a valid CommonMark document
 - **`md_stats(markdown, [exact])`** - Get document statistics (word count, reading time, etc.). By default `heading_count`, `code_block_count` and `link_count` come from line/character scanners, which count a `[text](target)` match anywhere — including images, code spans and fenced code — and miss reference links, autolinks, setext headings, indented code blocks and `~~~` fences. Pass `true` as the second argument to take those three counts from cmark's AST instead, so they agree with `md_extract_links` and `md_extract_code_blocks`. The default is unchanged for compatibility; `word_count`, `char_count`, `line_count` and `reading_time_minutes` are textual and identical either way.
 
   ```sql
@@ -448,7 +452,7 @@ SELECT
 FROM read_markdown('docs/**/*.md')
 WHERE cardinality(md_extract_metadata(content)) > 0;
 
--- Validate markdown content
+-- Find empty Markdown files
 SELECT filename, md_valid(content::varchar) as is_valid
 FROM read_markdown('**/*.md')
 WHERE NOT md_valid(content::varchar);

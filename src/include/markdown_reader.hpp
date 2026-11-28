@@ -15,6 +15,7 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_data/create_pragma_function_info.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
+#include "duckdb/formats/row_ranges.hpp"
 #include "markdown_utils.hpp"
 
 namespace duckdb {
@@ -60,7 +61,6 @@ public:
 		bool include_stats = false;         // Whether to calculate document statistics
 		idx_t maximum_file_size = 16777216; // 16MB default maximum file size
 		bool ignore_errors = false;
-		markdown_utils::MarkdownFlavor flavor = markdown_utils::MarkdownFlavor::GFM;
 
 		// Column inclusion options
 		bool include_filepath = false;   // Whether to include file_path column
@@ -75,10 +75,10 @@ public:
 		bool extract_tags = false;      // Adds `tags` column (#tag, #nested/tag)
 
 		// Section reader specific
-		bool include_content = true;         // Whether to include section content
-		int32_t min_level = 1;               // Minimum heading level
-		int32_t max_level = 6;               // Maximum heading level
-		bool include_empty_sections = false; // Whether to include sections without content
+		bool include_content = true;        // Whether to include section content
+		int32_t min_level = 1;              // Minimum heading level
+		int32_t max_level = 6;              // Maximum heading level
+		bool include_empty_sections = true; // Whether to include sections without content
 
 		// Content mode options (Issue #8)
 		std::string content_mode = "minimal"; // "minimal", "full", or "smart"
@@ -112,99 +112,29 @@ public:
 	static unique_ptr<TableRef> ReadMarkdownReplacement(ClientContext &context, ReplacementScanInput &input,
 	                                                    optional_ptr<ReplacementScanData> data);
 
-private:
-	/**
-	 * @brief Bind function for read_markdown that returns whole documents
-	 *
-	 * Returns one row per file with file_path, content (MD type), and optional metadata
-	 *
-	 * @param context Client context for the query
-	 * @param input Bind input parameters
-	 * @param return_types Types of columns to return
-	 * @param names Names of columns to return
-	 * @return Function data for execution
-	 */
-	static unique_ptr<FunctionData> MarkdownReadDocumentsBind(ClientContext &context, TableFunctionBindInput &input,
-	                                                          vector<LogicalType> &return_types,
-	                                                          vector<CompatName> &names);
-
-	/**
-	 * @brief Execution function for read_markdown
-	 *
-	 * @param context Client context
-	 * @param input Execution input data
-	 * @param state Local state for the function
-	 * @param output Output chunk to write results to
-	 */
-	static void MarkdownReadDocumentsFunction(ClientContext &context, TableFunctionInput &input, DataChunk &output);
-
-	/**
-	 * @brief Bind function for read_markdown_sections
-	 *
-	 * Returns one row per section with detailed section information
-	 *
-	 * @param context Client context for the query
-	 * @param input Bind input parameters
-	 * @param return_types Types of columns to return
-	 * @param names Names of columns to return
-	 * @return Function data for execution
-	 */
-	static unique_ptr<FunctionData> MarkdownReadSectionsBind(ClientContext &context, TableFunctionBindInput &input,
-	                                                         vector<LogicalType> &return_types,
-	                                                         vector<CompatName> &names);
-
-	/**
-	 * @brief Execution function for read_markdown_sections
-	 *
-	 * @param context Client context
-	 * @param input Execution input data
-	 * @param state Local state for the function
-	 * @param output Output chunk to write results to
-	 */
-	static void MarkdownReadSectionsFunction(ClientContext &context, TableFunctionInput &input, DataChunk &output);
-
-	/**
-	 * @brief Bind function for read_markdown_blocks
-	 *
-	 * Returns one row per file with blocks as LIST<markdown_doc_block>
-	 *
-	 * @param context Client context for the query
-	 * @param input Bind input parameters
-	 * @param return_types Types of columns to return
-	 * @param names Names of columns to return
-	 * @return Function data for execution
-	 */
-	static unique_ptr<FunctionData> MarkdownReadBlocksBind(ClientContext &context, TableFunctionBindInput &input,
-	                                                       vector<LogicalType> &return_types,
-	                                                       vector<CompatName> &names);
-
-	/**
-	 * @brief Execution function for read_markdown_blocks
-	 *
-	 * @param context Client context
-	 * @param input Execution input data
-	 * @param output Output chunk to write results to
-	 */
-	static void MarkdownReadBlocksFunction(ClientContext &context, TableFunctionInput &input, DataChunk &output);
-
 	/**
 	 * @brief Get file paths from various input types (single file, list, glob, directory)
 	 *
 	 * @param context Client context for file operations
 	 * @param path_value The input value containing file path(s)
 	 * @param ignore_errors Whether to ignore missing files
-	 * @return vector<string> List of resolved file paths
+	 * @return vector<OpenFileInfo> The resolved files, with what a listing knew of each
 	 */
-	static vector<string> GetFiles(ClientContext &context, const Value &path_value, bool ignore_errors);
+	static vector<OpenFileInfo> GetFiles(ClientContext &context, const Value &path_value, bool ignore_errors);
 
 	/**
 	 * @brief Get files from glob pattern with cross-filesystem support
 	 *
 	 * @param context Client context for file operations
 	 * @param pattern Glob pattern to match
-	 * @return vector<string> List of files matching the pattern
+	 * @return vector<OpenFileInfo> The files matching the pattern
 	 */
-	static vector<string> GetGlobFiles(ClientContext &context, const string &pattern);
+	static vector<OpenFileInfo> GetGlobFiles(ClientContext &context, const string &pattern);
+
+	struct MarkdownText {
+		shared_ptr<RowBuffer> owner;
+		std::string_view text;
+	};
 
 	/**
 	 * @brief Read a Markdown file and parse it
@@ -212,28 +142,21 @@ private:
 	 * @param context Client context for file operations
 	 * @param file_path Path to the Markdown file
 	 * @param options Markdown read options
-	 * @return string The file content
+	 * @return MarkdownText The file content and the buffer that holds it
 	 */
-	static string ReadMarkdownFile(ClientContext &context, const string &file_path, const MarkdownReadOptions &options);
+	static MarkdownText ReadMarkdownFile(ClientContext &context, const string &file_path,
+	                                     const MarkdownReadOptions &options);
 
 	/**
 	 * @brief Process a Markdown document into sections
 	 *
 	 * @param content The Markdown content
 	 * @param options Read options
+	 * @param include_content Whether to render the content of each section
 	 * @return vector<markdown_utils::MarkdownSection> Parsed sections
 	 */
-	static vector<markdown_utils::MarkdownSection> ProcessSections(const string &content,
-	                                                               const MarkdownReadOptions &options);
-
-	/**
-	 * @brief Bind the columns parameter for explicit type specification
-	 *
-	 * @param context Client context
-	 * @param input Function bind input
-	 * @param options Markdown read options to update with column specifications
-	 */
-	static void BindColumnTypes(ClientContext &context, TableFunctionBindInput &input, MarkdownReadOptions &options);
+	static vector<markdown_utils::MarkdownSection>
+	ProcessSections(std::string_view content, const MarkdownReadOptions &options, bool include_content);
 };
 
 } // namespace duckdb

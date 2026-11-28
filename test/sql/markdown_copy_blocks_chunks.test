@@ -1,0 +1,49 @@
+# name: test/sql/markdown_copy_blocks_chunks.test
+# description: COPY TO markdown in blocks mode renders the whole input as one list, so a heading keeps the inline children that arrive in the next chunk
+# group: [sql]
+
+require markdown
+
+statement ok
+CREATE TABLE blk AS
+SELECT g * 5 + k AS ord,
+       CASE WHEN k < 2 THEN 'block' ELSE 'inline' END AS kind,
+       CASE k WHEN 0 THEN 'paragraph' WHEN 1 THEN 'heading' WHEN 3 THEN 'code' ELSE 'text' END AS element_type,
+       CASE k WHEN 0 THEN 'p' || g WHEN 1 THEN 'The fn() call ' || g WHEN 2 THEN 'The ' WHEN 3 THEN 'fn()' ELSE ' call ' || g END AS content,
+       CASE WHEN k = 0 THEN NULL WHEN k = 1 THEN 1 ELSE 2 END AS level,
+       'text' AS encoding,
+       MAP{}::MAP(VARCHAR, VARCHAR) AS attributes
+FROM range(1000) r(g), range(5) s(k);
+
+statement ok
+COPY (SELECT kind, element_type, content, level, encoding, attributes FROM blk ORDER BY ord) TO '{TEST_DIR}/blocks_chunks.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query II
+SELECT content = (SELECT duck_blocks_to_md(list({kind: kind, element_type: element_type, content: content, level: level, encoding: encoding, attributes: attributes, element_order: NULL::INTEGER} ORDER BY ord)) FROM blk),
+       content LIKE '%' || chr(10) || '# The `fn()` call 409' || chr(10) || '%'
+FROM read_text('{TEST_DIR}/blocks_chunks.md');
+----
+true	true
+
+statement ok
+SET threads = 1;
+
+statement ok
+COPY (SELECT kind, element_type, content, level, encoding, attributes FROM blk ORDER BY ord) TO '{TEST_DIR}/blocks_per_thread' (FORMAT MARKDOWN, markdown_mode 'blocks', PER_THREAD_OUTPUT true);
+
+statement ok
+COPY (SELECT kind, element_type, content, level, encoding, attributes, ord % 2 AS part FROM blk ORDER BY ord) TO '{TEST_DIR}/blocks_partitioned' (FORMAT MARKDOWN, markdown_mode 'blocks', PARTITION_BY (part));
+
+query II
+SELECT count(*), bool_and(content = (SELECT duck_blocks_to_md(list({kind: kind, element_type: element_type, content: content, level: level, encoding: encoding, attributes: attributes, element_order: NULL::INTEGER} ORDER BY ord)) FROM blk))
+FROM read_text('{TEST_DIR}/blocks_per_thread/*.md');
+----
+1	true
+
+query III
+SELECT part, count(*), bool_and(content = (SELECT duck_blocks_to_md(list({kind: kind, element_type: element_type, content: content, level: level, encoding: encoding, attributes: attributes, element_order: NULL::INTEGER} ORDER BY ord)) FROM blk WHERE ord % 2 = part))
+FROM (SELECT content, CAST(regexp_extract(filename, 'part=([0-9]+)', 1) AS BIGINT) AS part FROM read_text('{TEST_DIR}/blocks_partitioned/*/*.md'))
+GROUP BY part ORDER BY part;
+----
+0	1	true
+1	1	true

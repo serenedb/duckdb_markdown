@@ -4,6 +4,8 @@
 #include "duckdb_compat.hpp"
 #include "duckdb/function/copy_function.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/formats/copy_file_writer.hpp"
+#include "duckdb/formats/csv_encoder.hpp"
 #include <string>
 #include <vector>
 
@@ -31,7 +33,6 @@ struct WriteMarkdownBindData : public FunctionData {
 	string content_column = "content";
 	string title_column = "title";
 	string level_column = "level";
-	string content_mode = "minimal"; // 'minimal' or 'full'
 	int32_t blank_lines = 1;
 
 	// Blocks mode column names (configurable) - uses duck_block naming
@@ -63,19 +64,48 @@ public:
 //===--------------------------------------------------------------------===//
 
 struct WriteMarkdownGlobalState : public GlobalFunctionData {
-	//! File handle for writing
-	unique_ptr<FileHandle> handle;
-	//! Lock for thread-safe writes
-	mutex write_lock;
-	//! Whether the header has been written (table mode)
-	bool header_written = false;
-	//! Whether frontmatter has been written (document mode)
-	bool frontmatter_written = false;
+	WriteMarkdownGlobalState(ClientContext &context, const string &file_path)
+	    : file(context, file_path, FileCompressionType::UNCOMPRESSED, string()) {
+	}
+
+	CopyFileWriter file;
 };
 
 //===--------------------------------------------------------------------===//
 // Markdown Copy Local State
 //===--------------------------------------------------------------------===//
+
+enum class MarkdownCellFormat : uint8_t {
+	TEXT,
+	BOOLEAN,
+	INT8,
+	INT16,
+	INT32,
+	INT64,
+	UINT8,
+	UINT16,
+	UINT32,
+	UINT64,
+	DECIMAL16,
+	DECIMAL32,
+	DECIMAL64,
+	DECIMAL128,
+	DATE,
+	TIME,
+	TIME_NS,
+	TIMESTAMP,
+	TIMESTAMP_NS,
+	INTERVAL,
+	UUID
+};
+
+struct MarkdownCellColumn {
+	MarkdownCellFormat format = MarkdownCellFormat::TEXT;
+	bool check = true;
+	uint8_t width = 0;
+	uint8_t scale = 0;
+	idx_t max_length = 0;
+};
 
 struct WriteMarkdownLocalState : public LocalFunctionData {
 	//! Local buffer for accumulating output
@@ -86,6 +116,10 @@ struct WriteMarkdownLocalState : public LocalFunctionData {
 	//! before it can see whether inlines follow. Accumulating across the local
 	//! state also keeps a run intact when it spans two DataChunks.
 	vector<Value> elements;
+	LogicalType block_type;
+	CsvSpecials cell_specials;
+	vector<MarkdownCellColumn> cell_columns;
+	string escaped_null;
 };
 
 //===--------------------------------------------------------------------===//
@@ -136,12 +170,10 @@ private:
 	//! Render the separator row with alignment indicators
 	static string RenderTableSeparator(const WriteMarkdownBindData &bind_data);
 
-	//! Render a single data row for table mode
-	static string RenderTableRow(const vector<UnifiedVectorFormat> &columns, idx_t row_idx,
-	                             const WriteMarkdownBindData &bind_data);
+	static void AppendTableRows(WriteMarkdownLocalState &lstate, const vector<UnifiedVectorFormat> &columns,
+	                            idx_t count, const WriteMarkdownBindData &bind_data);
 
-	//! Escape a cell value for table mode
-	static string EscapeCellValue(const string &value, const WriteMarkdownBindData &bind_data);
+	static void WriteBuffer(WriteMarkdownGlobalState &gstate, WriteMarkdownLocalState &lstate);
 
 	//===--------------------------------------------------------------------===//
 	// Document Mode Helpers
