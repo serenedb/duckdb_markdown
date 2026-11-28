@@ -32,7 +32,6 @@ unique_ptr<FunctionData> WriteMarkdownBindData::Copy() const {
 	result->content_column = content_column;
 	result->title_column = title_column;
 	result->level_column = level_column;
-	result->content_mode = content_mode;
 	result->blank_lines = blank_lines;
 	result->kind_column = kind_column;
 	result->element_type_column = element_type_column;
@@ -56,8 +55,7 @@ bool WriteMarkdownBindData::Equals(const FunctionData &other_p) const {
 	return markdown_mode == other.markdown_mode && null_value == other.null_value && header == other.header &&
 	       escape_pipes == other.escape_pipes && escape_newlines == other.escape_newlines &&
 	       frontmatter == other.frontmatter && content_column == other.content_column &&
-	       title_column == other.title_column && level_column == other.level_column &&
-	       content_mode == other.content_mode && blank_lines == other.blank_lines;
+	       title_column == other.title_column && level_column == other.level_column && blank_lines == other.blank_lines;
 }
 
 //===--------------------------------------------------------------------===//
@@ -99,7 +97,6 @@ void MarkdownCopyFunction::CopyOptions(ClientContext &context, CopyOptionsInput 
 	input.options["content_column"] = CopyOption(LogicalType::VARCHAR);
 	input.options["title_column"] = CopyOption(LogicalType::VARCHAR);
 	input.options["level_column"] = CopyOption(LogicalType::VARCHAR);
-	input.options["content_mode"] = CopyOption(LogicalType::VARCHAR);
 	input.options["blank_lines"] = CopyOption(LogicalType::INTEGER);
 
 	// Blocks mode options (uses duck_block naming)
@@ -162,8 +159,6 @@ unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, Copy
 			result->title_column = StringValue::Get(value[0]);
 		} else if (loption == "level_column") {
 			result->level_column = StringValue::Get(value[0]);
-		} else if (loption == "content_mode") {
-			result->content_mode = StringUtil::Lower(StringValue::Get(value[0]));
 		} else if (loption == "blank_lines") {
 			result->blank_lines = IntegerValue::Get(value[0]);
 		} else if (loption == "kind_column") {

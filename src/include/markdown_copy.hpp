@@ -32,7 +32,6 @@ struct WriteMarkdownBindData : public FunctionData {
 	string content_column = "content";
 	string title_column = "title";
 	string level_column = "level";
-	string content_mode = "minimal"; // 'minimal' or 'full'
 	int32_t blank_lines = 1;
 
 	// Blocks mode column names (configurable) - uses duck_block naming
