@@ -167,7 +167,7 @@ Reads Markdown files and parses them into hierarchical sections.
 - `content_mode := 'minimal'` - Content extraction mode (see below)
 - `max_depth := 6` - Maximum depth relative to min_level (e.g., `max_depth := 2` with `min_level := 1` includes h1 and h2 only)
 - `max_content_length := 0` - Maximum content length for 'smart' mode (0 = auto, uses 2000 chars)
-- `include_empty_sections := false` - Include sections without content
+- `include_empty_sections := true` - Include sections without content; `false` leaves out every section whose content is empty, such as a heading followed directly by another in `minimal` mode
 - `include_stats := false` - Add a `stats` column after `end_line`: each section's statistics, as `md_stats(content)` gives them
 - `filename := false` - Append a trailing `filename` column naming the source file (deprecated alias: `include_filepath`). Boolean only: the string form that renames the column is deliberately not accepted, because a renamed column produces a struct no duck_block consumer accepts.
 - `extract_metadata := true` - Include frontmatter as a special section (level=0)

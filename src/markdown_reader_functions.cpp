@@ -384,11 +384,17 @@ static void LoadMarkdownFile(ClientContext &context, const MarkdownFileBindData 
 					state.sections.push_back(fm_section);
 				}
 			}
-			for (auto &section :
-			     MarkdownReader::ProcessSections(content, options, options.include_content && state.renders_content)) {
-				if (SectionMatchesFilter(section.id, section.section_path, options.section_filter)) {
-					state.sections.push_back(std::move(section));
+			const bool drop_empty = !options.include_empty_sections;
+			for (auto &section : MarkdownReader::ProcessSections(
+			         content, options, (options.include_content && state.renders_content) || drop_empty)) {
+				if ((drop_empty && section.content.empty()) ||
+				    !SectionMatchesFilter(section.id, section.section_path, options.section_filter)) {
+					continue;
 				}
+				if (!options.include_content) {
+					section.content.clear();
+				}
+				state.sections.push_back(std::move(section));
 			}
 			state.rows = state.sections.size();
 			break;

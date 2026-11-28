@@ -76,10 +76,10 @@ public:
 		bool extract_tags = false;      // Adds `tags` column (#tag, #nested/tag)
 
 		// Section reader specific
-		bool include_content = true;         // Whether to include section content
-		int32_t min_level = 1;               // Minimum heading level
-		int32_t max_level = 6;               // Maximum heading level
-		bool include_empty_sections = false; // Whether to include sections without content
+		bool include_content = true;        // Whether to include section content
+		int32_t min_level = 1;              // Minimum heading level
+		int32_t max_level = 6;              // Maximum heading level
+		bool include_empty_sections = true; // Whether to include sections without content
 
 		// Content mode options (Issue #8)
 		std::string content_mode = "minimal"; // "minimal", "full", or "smart"

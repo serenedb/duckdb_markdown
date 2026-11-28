@@ -1,0 +1,43 @@
+# name: test/sql/markdown_empty_sections.test
+# description: include_empty_sections := false leaves out the sections whose content is empty; by default every section stays
+# group: [sql]
+
+require markdown
+
+query II
+SELECT section_id, length(content) FROM read_markdown_sections('test/data/sections_frontmatter.md') ORDER BY start_line;
+----
+frontmatter	18
+head	5
+sub	21
+empty	0
+child	6
+
+query I
+SELECT section_id FROM read_markdown_sections('test/data/sections_frontmatter.md', include_empty_sections := false) ORDER BY start_line;
+----
+frontmatter
+head
+sub
+child
+
+query I
+SELECT section_id FROM read_markdown_sections('test/data/sections_frontmatter.md', include_empty_sections := false, content_mode := 'full') ORDER BY start_line;
+----
+frontmatter
+head
+sub
+empty
+child
+
+query II
+SELECT section_id, content FROM read_markdown_sections('test/data/sections_frontmatter.md', include_empty_sections := false, include_content := false) WHERE level > 0 ORDER BY start_line;
+----
+head	(empty)
+sub	(empty)
+child	(empty)
+
+query I
+SELECT count(*) FROM read_markdown_sections('test/data/sections_frontmatter.md', include_empty_sections := false) WHERE section_id = 'empty';
+----
+0
