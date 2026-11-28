@@ -233,7 +233,7 @@ Available tokens: `wikilinks`, `tags`, and the `obsidian` flavor (= both). Unkno
 
 - **`md_to_html(markdown)`** - Convert markdown content to HTML
 - **`md_to_text(markdown)`** - Convert markdown to plain text (useful for full-text search)
-- **`md_valid(markdown)`** - Validate markdown content and return boolean
+- **`md_valid(markdown)`** - `false` for an empty string and `true` for any other: every text is a valid CommonMark document
 - **`md_stats(markdown, [exact])`** - Get document statistics (word count, reading time, etc.). By default `heading_count`, `code_block_count` and `link_count` come from line/character scanners, which count a `[text](target)` match anywhere — including images, code spans and fenced code — and miss reference links, autolinks, setext headings, indented code blocks and `~~~` fences. Pass `true` as the second argument to take those three counts from cmark's AST instead, so they agree with `md_extract_links` and `md_extract_code_blocks`. The default is unchanged for compatibility; `word_count`, `char_count`, `line_count` and `reading_time_minutes` are textual and identical either way.
 
   ```sql
@@ -452,7 +452,7 @@ SELECT
 FROM read_markdown('docs/**/*.md')
 WHERE cardinality(md_extract_metadata(content)) > 0;
 
--- Validate markdown content
+-- Find empty Markdown files
 SELECT filename, md_valid(content::varchar) as is_valid
 FROM read_markdown('**/*.md')
 WHERE NOT md_valid(content::varchar);

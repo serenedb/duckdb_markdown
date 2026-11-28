@@ -62,7 +62,7 @@ void MarkdownFunctions::RegisterValidationFunction(ExtensionLoader &loader) {
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 	FunctionDescription desc;
 	desc.parameter_names = {"markdown"};
-	desc.description = "Validate markdown content.";
+	desc.description = "False for an empty string and true for any other: every text is a valid CommonMark document.";
 	desc.examples = {"md_valid('# Hello')"};
 	desc.categories = {"markdown"};
 	info.descriptions.push_back(desc);
@@ -386,9 +386,10 @@ void MarkdownFunctions::RegisterStatsFunctions(ExtensionLoader &loader) {
 	CreateScalarFunctionInfo breadcrumb_info(std::move(md_section_breadcrumb));
 	breadcrumb_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 	FunctionDescription breadcrumb_desc;
-	breadcrumb_desc.parameter_names = {"file_path", "section_id"};
-	breadcrumb_desc.description = "Generate a breadcrumb string combining file path and section identifier.";
-	breadcrumb_desc.examples = {"md_section_breadcrumb('doc.md', 'intro')"};
+	breadcrumb_desc.parameter_names = {"markdown", "section_id"};
+	breadcrumb_desc.description = "The titles from the top-level section down to the section with this id in the "
+	                              "Markdown document, joined by ' > '.";
+	breadcrumb_desc.examples = {"md_section_breadcrumb('# Guide\n## Install', 'install')"};
 	breadcrumb_desc.categories = {"markdown"};
 	breadcrumb_info.descriptions.push_back(breadcrumb_desc);
 	loader.RegisterFunction(std::move(breadcrumb_info));
