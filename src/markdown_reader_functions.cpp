@@ -249,6 +249,18 @@ static LogicalType ContentType(const MarkdownReader::MarkdownReadOptions &option
 	return options.content_as_varchar ? LogicalType(LogicalTypeId::VARCHAR) : MarkdownTypes::MarkdownType();
 }
 
+static LogicalType StatsType() {
+	child_list_t<LogicalType> stats_struct;
+	stats_struct.push_back(make_pair("word_count", LogicalType(LogicalTypeId::BIGINT)));
+	stats_struct.push_back(make_pair("char_count", LogicalType(LogicalTypeId::BIGINT)));
+	stats_struct.push_back(make_pair("line_count", LogicalType(LogicalTypeId::BIGINT)));
+	stats_struct.push_back(make_pair("heading_count", LogicalType(LogicalTypeId::BIGINT)));
+	stats_struct.push_back(make_pair("code_block_count", LogicalType(LogicalTypeId::BIGINT)));
+	stats_struct.push_back(make_pair("link_count", LogicalType(LogicalTypeId::BIGINT)));
+	stats_struct.push_back(make_pair("reading_time_minutes", LogicalType(LogicalTypeId::DOUBLE)));
+	return LogicalType::STRUCT(stats_struct);
+}
+
 static void MarkdownSchema(MarkdownReadKind kind, const MarkdownReader::MarkdownReadOptions &options,
                            vector<LogicalType> &return_types, vector<CompatName> &names) {
 	switch (kind) {
@@ -260,16 +272,8 @@ static void MarkdownSchema(MarkdownReadKind kind, const MarkdownReader::Markdown
 			return_types.emplace_back(LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
 		}
 		if (options.include_stats) {
-			child_list_t<LogicalType> stats_struct;
-			stats_struct.push_back(make_pair("word_count", LogicalType(LogicalTypeId::BIGINT)));
-			stats_struct.push_back(make_pair("char_count", LogicalType(LogicalTypeId::BIGINT)));
-			stats_struct.push_back(make_pair("line_count", LogicalType(LogicalTypeId::BIGINT)));
-			stats_struct.push_back(make_pair("heading_count", LogicalType(LogicalTypeId::BIGINT)));
-			stats_struct.push_back(make_pair("code_block_count", LogicalType(LogicalTypeId::BIGINT)));
-			stats_struct.push_back(make_pair("link_count", LogicalType(LogicalTypeId::BIGINT)));
-			stats_struct.push_back(make_pair("reading_time_minutes", LogicalType(LogicalTypeId::DOUBLE)));
 			names.emplace_back("stats");
-			return_types.emplace_back(LogicalType::STRUCT(stats_struct));
+			return_types.emplace_back(StatsType());
 		}
 		break;
 	}
@@ -290,6 +294,10 @@ static void MarkdownSchema(MarkdownReadKind kind, const MarkdownReader::Markdown
 		return_types.emplace_back(LogicalType(LogicalTypeId::BIGINT));
 		names.emplace_back("end_line");
 		return_types.emplace_back(LogicalType(LogicalTypeId::BIGINT));
+		if (options.include_stats) {
+			names.emplace_back("stats");
+			return_types.emplace_back(StatsType());
+		}
 		break;
 	case MarkdownReadKind::BLOCKS:
 		// Uses duck_block shape: kind, element_type, content, level, encoding, attributes, element_order
@@ -339,7 +347,7 @@ static unique_ptr<GlobalTableFunctionState> MarkdownFileInitGlobal(ClientContext
 		const auto column_id = input.column_ids[i];
 		result->outputs[column_id] = i;
 		const auto &name = bind.names[column_id];
-		if (name == "content" || name == "wikilinks" || name == "tags") {
+		if (name == "content" || name == "wikilinks" || name == "tags" || name == "stats") {
 			result->renders_content = true;
 		}
 	}
@@ -475,6 +483,11 @@ static void WriteSectionRow(const MarkdownFileBindData &bind, const MarkdownFile
 	}
 	if (auto target = next()) {
 		markdown_writer::WriteNumber(*target, output_idx, static_cast<int64_t>(section.end_line));
+	}
+	if (options.include_stats) {
+		if (auto target = next()) {
+			markdown_writer::WriteStats(*target, output_idx, markdown_utils::CalculateStats(section.content));
+		}
 	}
 	if (options.include_filepath) {
 		if (auto target = next()) {

@@ -708,7 +708,8 @@ MarkdownStats CalculateStats(std::string_view markdown_str_in, bool exact) {
 	}
 
 	stats.char_count = markdown_str.length();
-	stats.line_count = static_cast<idx_t>(std::count(markdown_str.begin(), markdown_str.end(), '\n')) + 1;
+	stats.line_count =
+	    markdown_str.empty() ? 0 : static_cast<idx_t>(std::count(markdown_str.begin(), markdown_str.end(), '\n')) + 1;
 
 	// Exact mode: the three structural counts come from cmark's AST instead of
 	// the scanners below. Everything above (word/char/line) is textual and the

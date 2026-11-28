@@ -216,11 +216,7 @@ void ExecuteStats(DataChunk &args, Vector &result, bool has_exact_arg) {
 			}
 
 			const auto md_str = UnifiedVectorFormat::GetData<string_t>(markdowns)[idx].GetString();
-			markdown_utils::MarkdownStats stats {};
-			if (!md_str.empty()) {
-				stats = markdown_utils::CalculateStats(md_str, exact);
-			}
-			markdown_writer::WriteStats(result, row, stats);
+			markdown_writer::WriteStats(result, row, markdown_utils::CalculateStats(md_str, exact));
 		} catch (const std::exception &e) {
 			ThrowMarkdownError("computing Markdown stats", e);
 		}

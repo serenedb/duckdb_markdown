@@ -1,0 +1,35 @@
+# name: test/sql/markdown_section_stats.test
+# description: include_stats gives every section of read_markdown_sections the statistics of its content
+# group: [sql]
+
+require markdown
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM read_markdown_sections('test/data/sections_frontmatter.md', include_stats := true)) WHERE column_name IN ('end_line', 'stats');
+----
+end_line	BIGINT
+stats	STRUCT(word_count BIGINT, char_count BIGINT, line_count BIGINT, heading_count BIGINT, code_block_count BIGINT, link_count BIGINT, reading_time_minutes DOUBLE)
+
+query IIII
+SELECT section_id, stats.word_count, stats.code_block_count, stats = md_stats(content) FROM read_markdown_sections('test/data/sections_frontmatter.md', include_stats := true) ORDER BY start_line;
+----
+frontmatter	4	0	true
+head	1	0	true
+sub	4	1	true
+empty	0	0	true
+child	1	0	true
+
+query III
+SELECT stats.word_count, stats.line_count, filename FROM read_markdown_sections('test/data/sections_frontmatter.md', include_stats := true, filename := true, content_mode := 'full') WHERE section_id = 'head';
+----
+7	9	test/data/sections_frontmatter.md
+
+query II
+SELECT stats.line_count, stats.word_count FROM read_markdown_sections('test/data/sections_frontmatter.md', include_stats := true) WHERE section_id = 'empty';
+----
+0	0
+
+query I
+SELECT count(*) FROM read_markdown_sections('test/data/sections_frontmatter.md') WHERE section_id = 'head';
+----
+1
