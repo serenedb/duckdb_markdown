@@ -460,12 +460,6 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 			lstate.buffer += RenderSection(level, title, content, bind_data);
 		}
 	} else {
-		// Blocks mode: rebuild each row as a duck_block for the SHARED renderer in
-		// Combine. Every row shares the one duck_block type, so the list built from
-		// them compares each element's type by identity instead of field by field.
-		// level and attributes stay typed NULLs when absent: the renderer reads an
-		// absent level as the top level. element_order is NULL because order here
-		// is row order, which is what the renderer's walk uses anyway.
 		const auto count = input.size();
 		const auto &block_type = lstate.block_type;
 		const auto &attributes_type = StructType::GetChildType(block_type, Vocab::ATTRIBUTES_IDX);
