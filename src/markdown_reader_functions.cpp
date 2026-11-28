@@ -118,17 +118,6 @@ static void ParseMarkdownOptions(const named_argument_map_t &named_parameters,
 			options.maximum_file_size = UBigIntValue::Get(kv.second);
 		} else if (key == "ignore_errors") {
 			options.ignore_errors = BooleanValue::Get(kv.second);
-		} else if (key == "flavor") {
-			const auto flavor_str = StringValue::Get(kv.second);
-			if (flavor_str == "gfm") {
-				options.flavor = markdown_utils::MarkdownFlavor::GFM;
-			} else if (flavor_str == "commonmark") {
-				options.flavor = markdown_utils::MarkdownFlavor::COMMONMARK;
-			} else if (flavor_str == "multimarkdown") {
-				options.flavor = markdown_utils::MarkdownFlavor::MULTIMARKDOWN;
-			} else {
-				throw InvalidInputException("Unknown markdown flavor: %s", flavor_str);
-			}
 		} else if (key == "include_content") {
 			options.include_content = BooleanValue::Get(kv.second);
 		} else if (key == "min_level") {
@@ -159,8 +148,7 @@ static void ParseMarkdownOptions(const named_argument_map_t &named_parameters,
 		} else if (key == "extract_extensions") {
 			// Opt-in add-on extractors. Comma-separated VARCHAR — each token is a flavor
 			// ('obsidian' → wikilinks + tags) or a feature ('wikilinks', 'tags').
-			// NULL/unset is the default (no extensions); unknown tokens throw, matching
-			// the existing `flavor` param's strictness.
+			// NULL/unset is the default (no extensions); unknown tokens throw.
 			if (!kv.second.IsNull()) {
 				auto raw = StringValue::Get(kv.second);
 				auto tokens = StringUtil::Split(raw, ",");
@@ -612,7 +600,6 @@ static TableFunction MarkdownFileFunction(MarkdownReadKind kind) {
 		                                       {"maximum_file_size", LogicalType(LogicalTypeId::UBIGINT)},
 		                                       {"ignore_errors", LogicalType(LogicalTypeId::BOOLEAN)},
 		                                       {"extract_extensions", LogicalType(LogicalTypeId::VARCHAR)},
-		                                       {"flavor", LogicalType(LogicalTypeId::VARCHAR)},
 		                                       {"include_filepath", LogicalType(LogicalTypeId::BOOLEAN)},
 		                                       {"content_as_varchar", LogicalType(LogicalTypeId::BOOLEAN)},
 		                                   });
@@ -628,7 +615,6 @@ static TableFunction MarkdownFileFunction(MarkdownReadKind kind) {
 		                                       {"maximum_file_size", LogicalType(LogicalTypeId::UBIGINT)},
 		                                       {"ignore_errors", LogicalType(LogicalTypeId::BOOLEAN)},
 		                                       {"extract_extensions", LogicalType(LogicalTypeId::VARCHAR)},
-		                                       {"flavor", LogicalType(LogicalTypeId::VARCHAR)},
 		                                       {"include_content", LogicalType(LogicalTypeId::BOOLEAN)},
 		                                       {"min_level", LogicalType(LogicalTypeId::INTEGER)},
 		                                       {"max_level", LogicalType(LogicalTypeId::INTEGER)},
