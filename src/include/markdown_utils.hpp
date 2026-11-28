@@ -145,7 +145,8 @@ struct MarkdownBlock {
 // blocks (bold/italic/code/link/text at level+1) instead of markdown-in-content;
 // a block whose inline content is a single plain-text run keeps that text in
 // `content` (per the duck_blocks spec's content rules).
-std::vector<MarkdownBlock> ParseBlocks(std::string_view markdown_str, bool structured_inlines = false);
+std::vector<MarkdownBlock> ParseBlocks(std::string_view markdown_str, bool structured_inlines = false,
+                                       bool with_frontmatter = true);
 
 //===--------------------------------------------------------------------===//
 // Content Extraction

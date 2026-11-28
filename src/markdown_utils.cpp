@@ -1669,7 +1669,7 @@ static void EmitBlockChildren(cmark_node *container, int level, int32_t &order, 
 	}
 }
 
-std::vector<MarkdownBlock> ParseBlocks(std::string_view markdown_str, bool structured_inlines) {
+std::vector<MarkdownBlock> ParseBlocks(std::string_view markdown_str, bool structured_inlines, bool with_frontmatter) {
 	std::vector<MarkdownBlock> blocks;
 
 	if (markdown_str.empty()) {
@@ -1698,7 +1698,7 @@ std::vector<MarkdownBlock> ParseBlocks(std::string_view markdown_str, bool struc
 	auto fm_match = FindFrontmatter(markdown_str);
 	std::string frontmatter(fm_match.found ? markdown_str.substr(fm_match.body_start, fm_match.body_len)
 	                                       : std::string_view());
-	if (!frontmatter.empty()) {
+	if (with_frontmatter && !frontmatter.empty()) {
 		// LEVEL 1, ruled by duck_block_utils at 2771e9e (they coordinate the spec;
 		// Teague routed the question there). `level` is depth, and 1 means NOT
 		// NESTED -- it is not a claim of depth inside something. A frontmatter blob

@@ -396,7 +396,7 @@ static void LoadMarkdownFile(ClientContext &context, const MarkdownFileBindData 
 		case MarkdownReadKind::BLOCKS:
 			// Emit the canonical structured representation: rich text as kind='inline'
 			// child rows, not markdown syntax inside `content`.
-			state.blocks = markdown_utils::ParseBlocks(content, /*structured_inlines=*/true);
+			state.blocks = markdown_utils::ParseBlocks(content, /*structured_inlines=*/true, options.extract_metadata);
 			state.rows = state.blocks.size();
 			break;
 		}

@@ -1,0 +1,30 @@
+# name: test/sql/markdown_blocks_metadata.test
+# description: extract_metadata := false leaves the frontmatter block out of read_markdown_blocks, and the body's element_order still starts at 0
+# group: [sql]
+
+require markdown
+
+query III
+SELECT element_order, element_type, attributes['role'] FROM read_markdown_blocks('test/data/sections_frontmatter.md') ORDER BY element_order LIMIT 2;
+----
+0	metadata	frontmatter
+1	heading	NULL
+
+query II
+SELECT element_order, element_type FROM read_markdown_blocks('test/data/sections_frontmatter.md', extract_metadata := false) ORDER BY element_order LIMIT 1;
+----
+0	heading
+
+query III
+SELECT count(*), count(*) FILTER (WHERE element_type = 'metadata'), list(element_order ORDER BY element_order) = range(count(*)::INTEGER) FROM read_markdown_blocks('test/data/sections_frontmatter.md', extract_metadata := false);
+----
+8	0	true
+
+query I
+SELECT count(*) FROM (
+	SELECT kind, element_type, content, level, element_order - 1 FROM read_markdown_blocks('test/data/sections_frontmatter.md') WHERE element_type <> 'metadata'
+	EXCEPT
+	SELECT kind, element_type, content, level, element_order FROM read_markdown_blocks('test/data/sections_frontmatter.md', extract_metadata := false)
+);
+----
+0

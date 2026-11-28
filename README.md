@@ -124,6 +124,7 @@ Reads Markdown files and parses them into block-level elements (headings, paragr
 - `files` (required) - File path, glob pattern, or list of patterns
 - `filename := false` - Append a trailing `filename` column naming the source file (deprecated alias: `include_filepath`). Boolean only: the string form that renames the column is deliberately not accepted, because a renamed column produces a struct no duck_block consumer accepts.
 - `extract_extensions := NULL` - Opt-in add-on extractors (see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds per-block `wikilinks` and/or `tags` columns extracted from each block's content.
+- `extract_metadata := true` - Emit the frontmatter as its `metadata` block; `false` leaves it out, and `element_order` counts the body's blocks from 0.
 
 **Returns:** `(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)`. `level` is structural **depth**, minimum 1 — a heading's rank is `attributes['heading_level']`, not `level`. A heading carries both a flattened plain-text title in `content` (what `section_id` and the sections API read) and its formatted text as inline children, so `# **Bold** t` keeps its emphasis instead of collapsing to `# Bold t`. (`read_markdown_sections` has a `level` column too, but that one is heading rank, 0-6.) With `extract_extensions`, the requested add-on columns are appended.
 
